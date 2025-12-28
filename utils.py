@@ -1856,3 +1856,264 @@ def create_seats_tracking_chart(data, title=''):
     )
     
     return fig
+
+
+def load_completion_progress_actual_data(sheet_url):
+    """
+    Đọc dữ liệu thực tế cho phần Tiến độ hoàn thành kế hoạch từ Google Sheet.
+    URL: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=903527778#gid=903527778
+    
+    Cấu trúc:
+    - Cột A: Khu vực Đơn Vị (Mien Bac LK, Mien Tay LK, Mien Trung LK, TPHCM & DNB LK, Total LK)
+    - Cột D: Nhóm tuyến (Dom Total, Out Total, Grand Total) - KHÔNG lấy từ cột E (Tuyến tour)
+    - Cột F: GIÁ TRỊ LK (Lượt khách đã thực hiện)
+    - Cột G: GIÁ TRỊ DT (DT đã thực hiện)
+    - Cột H: GIÁ TRỊ LG (LG đã thực hiện)
+    - Cột I: Giai đoạn
+    
+    Returns: DataFrame với columns: region_unit, nhom_tuyen, num_customers, revenue, gross_profit, period
+    Chỉ lấy các dòng có nhom_tuyen là "Dom Total", "Out Total", "Grand Total"
+    """
+    import requests
+    import io
+    import re
+    
+    try:
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+        if not sheet_id_match:
+            return pd.DataFrame()
+        sheet_id = sheet_id_match.group(1)
+        gid_match = re.search(r"[?&#]gid=(\d+)", sheet_url)
+        gid = gid_match.group(1) if gid_match else '903527778'
+
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        resp = requests.get(csv_url, timeout=15)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.content.decode('utf-8', errors='replace')), skipinitialspace=True)
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Chuẩn hóa tên cột
+        df.columns = [col.strip() for col in df.columns]
+
+        # Tìm các cột cần thiết theo mô tả của người dùng
+        region_unit_col = None # Cột A
+        nhom_tuyen_col = None  # Cột D
+        customers_col = None   # Cột F
+        revenue_col = None     # Cột G
+        profit_col = None      # Cột H
+        period_col = None      # Cột I
+
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'KHU VỰC ĐƠN VỊ' in col_upper or 'KHU VUC DON VI' in col_upper:
+                region_unit_col = col
+            elif 'NHÓM TUYẾN' in col_upper or 'NHOM TUYEN' in col_upper:
+                nhom_tuyen_col = col
+            elif 'GIÁ TRỊ LK' in col_upper or 'GIA TRI LK' in col_upper:
+                customers_col = col
+            elif 'GIÁ TRỊ DT' in col_upper or 'GIA TRI DT' in col_upper:
+                revenue_col = col
+            elif 'GIÁ TRỊ LG' in col_upper or 'GIA TRI LG' in col_upper:
+                profit_col = col
+            elif 'GIAI ĐOẠN' in col_upper or 'GIAI DOAN' in col_upper:
+                period_col = col
+
+        # Fallback nếu không tìm thấy bằng tên - dùng vị trí cột
+        if region_unit_col is None and len(df.columns) > 0: 
+            region_unit_col = df.columns[0]  # Cột A
+        if nhom_tuyen_col is None and len(df.columns) > 3: 
+            nhom_tuyen_col = df.columns[3]  # Cột D
+        if customers_col is None and len(df.columns) > 5: 
+            customers_col = df.columns[5]  # Cột F
+        if revenue_col is None and len(df.columns) > 6: 
+            revenue_col = df.columns[6]  # Cột G
+        if profit_col is None and len(df.columns) > 7: 
+            profit_col = df.columns[7]  # Cột H
+        if period_col is None and len(df.columns) > 8: 
+            period_col = df.columns[8]  # Cột I
+
+        if nhom_tuyen_col is None:
+            return pd.DataFrame()
+
+        # Parse số liệu
+        def parse_numeric(val):
+            if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip().upper() == 'NAN':
+                return 0
+            val_str = str(val).strip().replace(',', '').replace('"', '')
+            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn
+            if '.' in val_str and ',' not in val_str:
+                if val_str.count('.') > 1:
+                    val_str = val_str.replace('.', '')
+                elif val_str.count('.') == 1:
+                    parts = val_str.split('.')
+                    if len(parts) == 2 and len(parts[1]) > 2:
+                        val_str = val_str.replace('.', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+
+        result_df = pd.DataFrame()
+        result_df['region_unit'] = df[region_unit_col].astype(str).str.strip() if region_unit_col else ''
+        result_df['nhom_tuyen'] = df[nhom_tuyen_col].astype(str).str.strip()
+        # LK (Lượt khách) đã là số thực tế, KHÔNG nhân với 1,000,000
+        result_df['num_customers'] = df[customers_col].apply(lambda x: parse_numeric(x) if customers_col else 0) if customers_col else 0
+        # DT và LG đơn vị là triệu đồng (tr.đ), cần nhân với 1,000,000 để chuyển sang VND
+        result_df['revenue'] = df[revenue_col].apply(lambda x: parse_numeric(x) * 1_000_000 if revenue_col else 0) if revenue_col else 0  # Convert from million VND to VND
+        result_df['gross_profit'] = df[profit_col].apply(lambda x: parse_numeric(x) * 1_000_000 if profit_col else 0) if profit_col else 0  # Convert from million VND to VND
+        result_df['period'] = df[period_col].astype(str).str.strip() if period_col else ''
+
+        # Chỉ giữ lại các dòng có Nhóm tuyến là "Dom Total", "Out Total", "Grand Total"
+        result_df = result_df[
+            result_df['nhom_tuyen'].astype(str).str.contains('Dom Total|Out Total|Grand Total', case=False, na=False)
+        ].copy()
+
+        return result_df
+
+    except Exception as e:
+        return pd.DataFrame()
+
+
+def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
+    """
+    Đọc dữ liệu kế hoạch cho phần Tiến độ hoàn thành kế hoạch từ Google Sheet.
+    URL Tết: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=1651160424#gid=1651160424
+    URL Xuân: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=212301737#gid=212301737
+    
+    Cấu trúc:
+    - Cột A: Nhóm tuyến (Dom Total, Out Total, Grand Total) - KHÔNG lấy từ cột B (Tuyến tour)
+    - Cột C: LK Kế hoạch công ty
+    - Cột D: DT Kế hoạch công ty
+    - Cột E: LG Kế hoạch Công ty
+    
+    Returns: DataFrame với columns: nhom_tuyen, plan_customers, plan_revenue, plan_profit, period
+    Chỉ lấy các dòng có nhom_tuyen là "Dom Total", "Out Total", "Grand Total"
+    """
+    import requests
+    import io
+    import re
+    
+    try:
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+        if not sheet_id_match:
+            return pd.DataFrame()
+        
+        sheet_id = sheet_id_match.group(1)
+        gid_match = re.search(r"[?&#]gid=(\d+)", sheet_url)
+        gid = gid_match.group(1) if gid_match else None
+        
+        if not gid:
+            return pd.DataFrame()
+        
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        
+        # Tải CSV
+        resp = requests.get(csv_url, timeout=15)
+        resp.raise_for_status()
+        
+        # Đọc CSV
+        text = resp.content.decode('utf-8', errors='replace')
+        lines = text.split('\n')
+        
+        # Tìm dòng header (dòng 5, index 4) - chứa "Nhom tuyen" và "Tuyến Tour"
+        header_idx = None
+        for i, line in enumerate(lines[:10]):
+            line_upper = line.upper()
+            if 'NHOM TUYEN' in line_upper or 'NHOM TUYẾN' in line_upper:
+                if 'TUYẾN TOUR' in line_upper or 'TUYEN TOUR' in line_upper:
+                    header_idx = i
+                    break
+        
+        if header_idx is None:
+            header_idx = 4 if len(lines) > 4 else 0
+        
+        # Đọc từ dòng header
+        df = pd.read_csv(io.StringIO('\n'.join(lines[header_idx:])), skipinitialspace=True)
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Tìm cột Nhóm tuyến (cột A)
+        nhom_tuyen_col = None
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'NHOM TUYEN' in col_upper or 'NHOM TUYẾN' in col_upper:
+                nhom_tuyen_col = col
+                break
+        
+        # Fallback: dùng vị trí cột (cột A = index 0)
+        if nhom_tuyen_col is None and len(df.columns) > 0:
+            nhom_tuyen_col = df.columns[0]
+        
+        if nhom_tuyen_col is None:
+            return pd.DataFrame()
+        
+        # Lấy giá trị từ cột tổng Công ty (cột C, D, E)
+        # Cột C (index 2): LK Kế hoạch công ty
+        # Cột D (index 3): DT Kế hoạch công ty  
+        # Cột E (index 4): LG Kế hoạch Công ty
+        
+        customers_col = None
+        revenue_col = None
+        profit_col = None
+        
+        if len(df.columns) > 2:
+            customers_col = df.columns[2]  # Cột C: LK Kế hoạch công ty
+        if len(df.columns) > 3:
+            revenue_col = df.columns[3]  # Cột D: DT Kế hoạch công ty
+        if len(df.columns) > 4:
+            profit_col = df.columns[4]  # Cột E: LG Kế hoạch Công ty
+        
+        # Parse số liệu
+        def parse_value(val):
+            if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip().upper() == 'NAN':
+                return 0
+            val_str = str(val).strip().replace(',', '').replace('"', '')
+            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn
+            if '.' in val_str and ',' not in val_str:
+                if val_str.count('.') > 1:
+                    val_str = val_str.replace('.', '')
+                elif val_str.count('.') == 1:
+                    parts = val_str.split('.')
+                    if len(parts) == 2 and len(parts[1]) <= 2:
+                        pass  # Có thể là số thập phân
+                    else:
+                        val_str = val_str.replace('.', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+        
+        result_df = pd.DataFrame()
+        result_df['nhom_tuyen'] = df[nhom_tuyen_col].astype(str).str.strip()
+        
+        if customers_col:
+            result_df['plan_customers'] = df[customers_col].apply(parse_value)
+        else:
+            result_df['plan_customers'] = 0
+        
+        # LƯU Ý: Dữ liệu từ Plan Tết và Plan Xuân có đơn vị DT và LG là triệu đồng (tr.đ)
+        # Chuyển đổi sang VND để tính toán thống nhất với các nguồn dữ liệu khác
+        if revenue_col:
+            result_df['plan_revenue'] = df[revenue_col].apply(parse_value) * 1_000_000  # Chuyển từ triệu đồng sang VND
+        else:
+            result_df['plan_revenue'] = 0
+        
+        if profit_col:
+            result_df['plan_profit'] = df[profit_col].apply(parse_value) * 1_000_000  # Chuyển từ triệu đồng sang VND
+        else:
+            result_df['plan_profit'] = 0
+        
+        result_df['period'] = period_name
+        
+        # Chỉ giữ lại các dòng có Nhóm tuyến là "Dom Total", "Out Total", "Grand Total"
+        result_df = result_df[
+            result_df['nhom_tuyen'].astype(str).str.contains('Dom Total|Out Total|Grand Total', case=False, na=False)
+        ].copy()
+        
+        return result_df
+        
+    except Exception as e:
+        return pd.DataFrame()

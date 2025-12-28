@@ -78,6 +78,8 @@ from utils import (
     load_route_performance_data, 
     load_unit_completion_data, 
     create_completion_progress_chart,
+    load_completion_progress_actual_data,
+    load_completion_progress_plan_data,
     
     # Hàm phân loại tuyến
     classify_route_type,
@@ -1538,26 +1540,74 @@ with tab1:
     else:
         plan_xuan_data = st.session_state[cache_key_plan_xuan]
     
-    # Gộp kế hoạch Tết và Xuân
-    if not plan_tet_data.empty and not plan_xuan_data.empty:
-        all_plan_data = pd.concat([plan_tet_data, plan_xuan_data], ignore_index=True)
-    elif not plan_tet_data.empty:
-        all_plan_data = plan_tet_data.copy()
-    elif not plan_xuan_data.empty:
-        all_plan_data = plan_xuan_data.copy()
-    else:
-        all_plan_data = pd.DataFrame()
+    # ===== PHẦN "TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH" =====
+    # Phần này chỉ sử dụng dữ liệu tổng (Dom Total, Out Total, Grand Total) từ Nhóm tuyến
+    # KHÔNG sử dụng dữ liệu từ Tuyến tour
     
-    if not all_plan_data.empty and not route_performance_data.empty:
-        # Merge kế hoạch với thực tế theo route và period
-        # Chuẩn hóa tên route để merge
-        all_plan_data['route_normalized'] = all_plan_data['route'].astype(str).str.strip().str.upper()
-        route_performance_data['route_normalized'] = route_performance_data['route'].astype(str).str.strip().str.upper()
+    # Load dữ liệu thực tế (actual) từ Google Sheet
+    with st.spinner('Đang tải dữ liệu thực tế...'):
+        completion_actual_data = load_completion_progress_actual_data(DEFAULT_ROUTE_PERFORMANCE_URL)
+    
+    # Load dữ liệu kế hoạch (plan) từ Google Sheet
+    with st.spinner('Đang tải dữ liệu kế hoạch...'):
+        completion_plan_tet = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT')
+        completion_plan_xuan = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN')
+    
+    # Gộp kế hoạch Tết và Xuân
+    if not completion_plan_tet.empty and not completion_plan_xuan.empty:
+        completion_plan_data = pd.concat([completion_plan_tet, completion_plan_xuan], ignore_index=True)
+    elif not completion_plan_tet.empty:
+        completion_plan_data = completion_plan_tet.copy()
+    elif not completion_plan_xuan.empty:
+        completion_plan_data = completion_plan_xuan.copy()
+    else:
+        completion_plan_data = pd.DataFrame()
+    
+    # Merge actual và plan data
+    if not completion_actual_data.empty and not completion_plan_data.empty:
+        # Filter actual data theo selected_period và selected_region
+        if selected_period != 'Tất cả':
+            completion_actual_filtered = completion_actual_data[
+                completion_actual_data['period'].astype(str).str.upper() == selected_period.upper()
+            ].copy()
+        else:
+            completion_actual_filtered = completion_actual_data.copy()
         
-        # Merge
-        merged_data = route_performance_data.merge(
-            all_plan_data[['route_normalized', 'route_type', 'period', 'plan_customers', 'plan_revenue', 'plan_profit']],
-            on=['route_normalized', 'route_type', 'period'],
+        # Filter actual data theo region_unit
+        if region_filter and region_filter != 'Tất cả':
+            # Map region_filter to region_unit values
+            region_mapping = {
+                'Mien Bac': 'Mien Bac LK',
+                'Mien Trung': 'Mien Trung LK',
+                'Mien Tay': 'Mien Tay LK',
+                'TPHCM & DNB': 'TPHCM & DNB LK'
+            }
+            target_region_unit = region_mapping.get(region_filter, region_filter + ' LK')
+            completion_actual_filtered = completion_actual_filtered[
+                completion_actual_filtered['region_unit'] == target_region_unit
+            ].copy()
+        else:
+            # Nếu "Tất cả", lấy "Total LK"
+            completion_actual_filtered = completion_actual_filtered[
+                completion_actual_filtered['region_unit'] == 'Total LK'
+            ].copy()
+        
+        # Filter plan data theo selected_period
+        if selected_period != 'Tất cả':
+            completion_plan_filtered = completion_plan_data[
+                completion_plan_data['period'].astype(str).str.upper() == selected_period.upper()
+            ].copy()
+        else:
+            completion_plan_filtered = completion_plan_data.copy()
+        
+        # Chuẩn hóa nhom_tuyen để merge
+        completion_actual_filtered['nhom_tuyen_normalized'] = completion_actual_filtered['nhom_tuyen'].astype(str).str.strip().str.upper()
+        completion_plan_filtered['nhom_tuyen_normalized'] = completion_plan_filtered['nhom_tuyen'].astype(str).str.strip().str.upper()
+        
+        # Merge actual và plan
+        merged_data = completion_actual_filtered.merge(
+            completion_plan_filtered[['nhom_tuyen_normalized', 'route_type', 'period', 'plan_customers', 'plan_revenue', 'plan_profit']],
+            on=['nhom_tuyen_normalized', 'route_type', 'period'],
             how='left',
             suffixes=('_actual', '_plan')
         )

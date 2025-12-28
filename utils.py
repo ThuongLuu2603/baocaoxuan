@@ -1128,7 +1128,7 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         
         # Đọc CSV
         text = resp.content.decode('utf-8', errors='replace')
-        lines = text.split('\n')
+        lines = [line.rstrip('\r') for line in text.split('\n')]  # Loại bỏ \r để tránh lỗi
         
         # Tìm dòng header (dòng 5, index 4) - chứa "Nhom tuyen" và "Tuyến Tour"
         header_idx = None
@@ -1142,6 +1142,25 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         if header_idx is None:
             # Fallback: dùng dòng 5 (index 4)
             header_idx = 4 if len(lines) > 4 else 0
+        
+        # Đọc dòng 4 (index 3) TRƯỚC khi đọc DataFrame để có region_headers
+        region_row_idx = 3  # Dòng 4 (index 3)
+        region_headers = []
+        if len(lines) > region_row_idx:
+            try:
+                # Đọc dòng 4 bằng pandas để parse CSV chính xác
+                region_df = pd.read_csv(io.StringIO(lines[region_row_idx]), header=None, nrows=1)
+                if not region_df.empty:
+                    region_headers = [str(col).strip() for col in region_df.iloc[0].values]
+            except Exception as e:
+                # Fallback: dùng split đơn giản với CSV parser
+                import csv
+                try:
+                    reader = csv.reader([lines[region_row_idx]])
+                    region_headers = [col.strip().strip('"').strip("'") for col in next(reader)]
+                except:
+                    region_line = lines[region_row_idx]
+                    region_headers = [col.strip().strip('"').strip("'") for col in region_line.split(',')]
         
         # Đọc từ dòng header
         df = pd.read_csv(io.StringIO('\n'.join(lines[header_idx:])), skipinitialspace=True)
@@ -1170,12 +1189,7 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         if route_col is None:
             return pd.DataFrame()
         
-        # Đọc dòng 4 (index 3) để lấy tên các khu vực
-        region_row_idx = 3  # Dòng 4 (index 3)
-        region_headers = []
-        if len(lines) > region_row_idx:
-            region_line = lines[region_row_idx]
-            region_headers = [col.strip() for col in region_line.split(',')]
+        # region_headers đã được đọc ở trên (dòng 1146-1163), không cần đọc lại
         
         # Xác định cột cần lấy dựa trên region_filter
         customers_col = None
@@ -1192,7 +1206,14 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
                 'MIEN TRUNG': 'MIEN TRUNG',
                 'MIỀN TRUNG': 'MIEN TRUNG',
                 'MIEN NAM': 'MIEN NAM',
-                'MIỀN NAM': 'MIEN NAM'
+                'MIỀN NAM': 'MIEN NAM',
+                'TPHCM & DNB': 'TPHCM & DNB',
+                'TPHCM & DNB': 'TPHCM & DNB',
+                'TPHCM DNB': 'TPHCM & DNB',
+                'TPHCM VÀ DNB': 'TPHCM & DNB',
+                'MIEN TAY': 'MIEN TAY',
+                'MIỀN TÂY': 'MIEN TAY',
+                'MIENTAY': 'MIEN TAY'
             }
             target_region = region_mapping.get(region_filter_upper, region_filter_upper)
         else:
@@ -1209,47 +1230,261 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
                 profit_col = df.columns[4]  # Cột E: LG (tr.d)
         else:
             # Tìm cột của khu vực cụ thể
-            # Tìm vị trí của khu vực trong dòng 4
-            region_col_start = None
-            for i, header in enumerate(region_headers):
-                if target_region in str(header).upper():
-                    # Cột khu vực bắt đầu từ vị trí này
-                    # Mỗi khu vực có 3 cột: LK, DT, LG
-                    region_col_start = i
-                    break
+            # Cách tiếp cận: Tìm trực tiếp các cột LK, DT, LG của khu vực trong DataFrame
+            # Cấu trúc: Cột C, D, E (index 2, 3, 4) = Công ty
+            # Cột F, G, H (index 5, 6, 7) = Miền Bắc (nếu có)
+            # Cột I, J, K (index 8, 9, 10) = Miền Trung (nếu có)
+            # ...
             
-            if region_col_start is not None and len(df.columns) > region_col_start:
-                # Cột LK của khu vực
-                if len(df.columns) > region_col_start:
-                    customers_col = df.columns[region_col_start]
-                # Cột DT của khu vực
-                if len(df.columns) > region_col_start + 1:
-                    revenue_col = df.columns[region_col_start + 1]
-                # Cột LG của khu vực
-                if len(df.columns) > region_col_start + 2:
-                    profit_col = df.columns[region_col_start + 2]
-            else:
-                # Fallback: tìm bằng tên cột
-                for col in df.columns:
-                    col_upper = str(col).upper()
-                    if col != nhom_tuyen_col and col != route_col:
-                        if customers_col is None and (col_upper == 'LK' or 'LƯỢT KHÁCH' in col_upper):
-                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
-                                customers_col = col
-                        elif revenue_col is None and ('DT (TR.D)' in col_upper or 'DT(TR.D)' in col_upper or ('DT' in col_upper and 'TR.D' in col_upper)):
-                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
-                                revenue_col = col
-                        elif profit_col is None and ('LG (TR.D)' in col_upper or 'LG(TR.D)' in col_upper or ('LG' in col_upper and 'TR.D' in col_upper)):
-                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
-                                profit_col = col
+            # Tìm vị trí của khu vực trong region_headers (dòng 4) để tính offset
+            # Từ file CSV thực tế: dòng 4 có ",,Công ty,Công ty,Công ty,Mien Bac,Mien Bac,Mien Bac,Mien Trung,..."
+            # Vậy index trong region_headers:
+            # - Index 0, 1: trống (cột A, B)
+            # - Index 2, 3, 4: "Công ty" (3 lần) -> region_idx_in_headers = 1 (vì "Công ty" xuất hiện đầu tiên ở index 2)
+            # - Index 5, 6, 7: "Mien Bac" (3 lần) -> region_idx_in_headers = 2
+            # - Index 8, 9, 10: "Mien Trung" (3 lần) -> region_idx_in_headers = 3
+            # Nhưng thực tế, mỗi khu vực xuất hiện 3 lần (cho LK, DT, LG), nên cần tìm index đầu tiên của khu vực đó
+            
+            region_idx_in_headers = None
+            if region_headers:
+                # Tìm index đầu tiên của khu vực trong region_headers
+                # Mỗi khu vực xuất hiện 3 lần liên tiếp (cho LK, DT, LG)
+                for i, header in enumerate(region_headers):
+                    header_upper = str(header).upper().strip()
+                    # Bỏ qua các cột trống hoặc không phải tên khu vực
+                    if not header_upper or header_upper in ['', 'NAN', 'NONE']:
+                        continue
+                    
+                    # Kiểm tra match với target_region
+                    if target_region == 'MIEN BAC':
+                        if ('MIEN BAC' in header_upper or 'MIỀN BẮC' in header_upper or 
+                            'MIENBAC' in header_upper or 
+                            (header_upper.startswith('MIEN') and 'BAC' in header_upper and 'TRUNG' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'BẮC' in header_upper and 'TRUNG' not in header_upper)):
+                            # Tìm index đầu tiên của khu vực này (bỏ qua các cột trống ở đầu)
+                            # Trong region_headers, "Công ty" bắt đầu từ index 2, "Mien Bac" từ index 5
+                            # Nhưng cần tính lại dựa trên vị trí thực tế
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN TRUNG':
+                        if ('MIEN TRUNG' in header_upper or 'MIỀN TRUNG' in header_upper or 
+                            'MIENTRUNG' in header_upper or
+                            (header_upper.startswith('MIEN') and 'TRUNG' in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'TRUNG' in header_upper)):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN NAM':
+                        if ('MIEN NAM' in header_upper or 'MIỀN NAM' in header_upper or 
+                            'MIENNAM' in header_upper or
+                            (header_upper.startswith('MIEN') and 'NAM' in header_upper and 'BAC' not in header_upper and 'TRUNG' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'NAM' in header_upper and 'BẮC' not in header_upper and 'TRUNG' not in header_upper)):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'TPHCM & DNB':
+                        if ('TPHCM' in header_upper and 'DNB' in header_upper) or \
+                           ('TPHCM' in header_upper and ('&' in header_upper or 'VÀ' in header_upper or 'VA' in header_upper)) or \
+                           ('TPHCM' in header_upper and 'DNB' in header_upper) or \
+                           ('HO CHI MINH' in header_upper and 'DNB' in header_upper):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN TAY':
+                        if ('MIEN TAY' in header_upper or 'MIỀN TÂY' in header_upper or 
+                            'MIENTAY' in header_upper or
+                            (header_upper.startswith('MIEN') and 'TAY' in header_upper and 'BAC' not in header_upper and 'TRUNG' not in header_upper and 'NAM' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'TÂY' in header_upper and 'BẮC' not in header_upper and 'TRUNG' not in header_upper and 'NAM' not in header_upper)):
+                            region_idx_in_headers = i
+                            break
+            
+            # Tính offset dựa trên vị trí trong region_headers
+            # Cấu trúc: Dòng 4 có "Công ty", "Miền Bắc", "Miền Trung", ...
+            # Dòng 5 có "Nhom tuyen", "Tuyến Tour", "LK", "DT (tr.d)", "LG (tr.d)", "LK", "DT (tr.d)", "LG (tr.d)", ...
+            # Cột A (index 0): Nhom tuyen
+            # Cột B (index 1): Tuyến Tour  
+            # Cột C, D, E (index 2, 3, 4): Công ty (LK, DT, LG) - region_idx_in_headers = 0
+            # Cột F, G, H (index 5, 6, 7): Miền Bắc (LK, DT, LG) - region_idx_in_headers = 1
+            # Cột I, J, K (index 8, 9, 10): Miền Trung (LK, DT, LG) - region_idx_in_headers = 2
+            # Công thức: col_offset = 2 + region_idx_in_headers * 3
+            # Miền Bắc (region_idx_in_headers = 1): col_offset = 2 + 1 * 3 = 5
+            # Miền Trung (region_idx_in_headers = 2): col_offset = 2 + 2 * 3 = 8
+            # Từ file CSV thực tế:
+            # region_headers[5] = "Mien Bac" (index đầu tiên của Mien Bac)
+            # DataFrame.columns[5] = "LK" hoặc "LK.1" (Mien Bac)
+            # Vậy col_offset = region_idx_in_headers
+            if region_idx_in_headers is not None:
+                col_offset = region_idx_in_headers
+                
+                # Kiểm tra xem có đủ cột không
+                if len(df.columns) > col_offset:
+                    customers_col = df.columns[col_offset]  # LK
+                if len(df.columns) > col_offset + 1:
+                    revenue_col = df.columns[col_offset + 1]  # DT
+                if len(df.columns) > col_offset + 2:
+                    profit_col = df.columns[col_offset + 2]  # LG
+                
+                # Debug: In ra để kiểm tra
+                # print(f"DEBUG: region_idx_in_headers={region_idx_in_headers}, col_offset={col_offset}")
+                # print(f"DEBUG: customers_col={customers_col}, revenue_col={revenue_col}, profit_col={profit_col}")
+                # print(f"DEBUG: df.columns={list(df.columns)}")
+                # print(f"DEBUG: region_headers={region_headers}")
+            
+            # Fallback: Tìm bằng cách duyệt qua các cột và tìm cột LK, DT, LG
+            # QUAN TRỌNG: Khi pandas đọc CSV có nhiều cột trùng tên, nó sẽ tự động thêm suffix
+            # Ví dụ: "LK" (Công ty), "LK.1" (Miền Bắc), "LK.2" (Miền Trung)
+            if customers_col is None or revenue_col is None or profit_col is None:
+                # Tìm các cột LK, DT, LG theo thứ tự và vị trí
+                lk_cols = []
+                dt_cols = []
+                lg_cols = []
+                
+                for idx, col in enumerate(df.columns):
+                    if col == nhom_tuyen_col or col == route_col:
+                        continue
+                    col_str = str(col).strip()
+                    col_upper = col_str.upper()
+                    col_idx = idx
+                    
+                    # Tìm cột LK (có thể là "LK", "LK.1", "LK.2", ...)
+                    if col_upper == 'LK' or col_upper.startswith('LK.') or 'LƯỢT KHÁCH' in col_upper:
+                        lk_cols.append((col_idx, col))
+                    # Tìm cột DT (có thể là "DT (tr.d)", "DT (tr.d).1", "DT (tr.d).2", ...)
+                    elif 'DT (TR.D)' in col_upper or 'DT(TR.D)' in col_upper or (col_upper.startswith('DT') and ('TR.D' in col_upper or 'TRD' in col_upper)):
+                        dt_cols.append((col_idx, col))
+                    # Tìm cột LG (có thể là "LG (tr.d)", "LG (tr.d).1", "LG (tr.d).2", ...)
+                    elif 'LG (TR.D)' in col_upper or 'LG(TR.D)' in col_upper or (col_upper.startswith('LG') and ('TR.D' in col_upper or 'TRD' in col_upper)):
+                        lg_cols.append((col_idx, col))
+                
+                # Xác định cột nào thuộc về khu vực đã chọn dựa trên vị trí
+                # Công ty: cột đầu tiên (index 2, 3, 4) - không có suffix
+                # Miền Bắc: cột thứ hai (index 5, 6, 7) - có suffix .1 hoặc là cột thứ 2
+                # Miền Trung: cột thứ ba (index 8, 9, 10) - có suffix .2 hoặc là cột thứ 3
+                if target_region == 'MIEN BAC':
+                    # Lấy cột LK, DT, LG thứ hai (sau Công ty)
+                    # Ưu tiên: cột có suffix .1, nếu không có thì lấy cột có index trong khoảng 5-7
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN TRUNG':
+                    # Lấy cột LK, DT, LG thứ ba
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN NAM':
+                    # Lấy cột LK, DT, LG thứ tư
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 11 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 11 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 11 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'TPHCM & DNB':
+                    # Lấy cột LK, DT, LG thứ năm (index 11, 12, 13) - có suffix .3 hoặc là cột thứ 4
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 11:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 11 and col_idx < 14 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 12:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 12 and col_idx < 14 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 13:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 13 and col_idx < 14 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN TAY':
+                    # Lấy cột LK, DT, LG thứ sáu (index 14, 15, 16) - có suffix .4 hoặc là cột thứ 5
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 14 and col_idx < 17 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 15 and col_idx < 17 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 16 and col_idx < 17 and profit_col is None:
+                            profit_col = col_name
         
-        # Fallback cuối cùng: dùng cột C, D, E nếu không tìm thấy
-        if customers_col is None and len(df.columns) > 2:
-            customers_col = df.columns[2]
-        if revenue_col is None and len(df.columns) > 3:
-            revenue_col = df.columns[3]
-        if profit_col is None and len(df.columns) > 4:
-            profit_col = df.columns[4]
+        # Fallback cuối cùng: CHỈ dùng cột C, D, E (Công ty) nếu KHÔNG có region_filter
+        # Nếu có region_filter nhưng không tìm thấy cột, KHÔNG fallback về Công ty
+        # (vì điều này sẽ làm sai dữ liệu khi filter theo khu vực)
+        if target_region is None:
+            # Chỉ fallback về Công ty nếu không có region_filter
+            if customers_col is None and len(df.columns) > 2:
+                customers_col = df.columns[2]
+            if revenue_col is None and len(df.columns) > 3:
+                revenue_col = df.columns[3]
+            if profit_col is None and len(df.columns) > 4:
+                profit_col = df.columns[4]
         
         # Tạo DataFrame kết quả
         result_df = pd.DataFrame()
@@ -1282,22 +1517,37 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         def parse_value(val):
             if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip() == 'nan':
                 return 0
-            val_str = str(val).strip().replace(',', '').replace('"', '')
-            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn (ví dụ: "6.800" = 6800)
-            # Nếu có dấu chấm và không có dấu phẩy, coi dấu chấm là dấu phân cách hàng nghìn
-            if '.' in val_str and ',' not in val_str:
-                # Đếm số dấu chấm - nếu có nhiều hơn 1, có thể là dấu phân cách hàng nghìn
-                if val_str.count('.') > 1:
-                    val_str = val_str.replace('.', '')
-                elif val_str.count('.') == 1:
-                    # Nếu chỉ có 1 dấu chấm, kiểm tra xem có phải là số thập phân không
-                    parts = val_str.split('.')
-                    if len(parts) == 2 and len(parts[1]) <= 2:
-                        # Có thể là số thập phân (ví dụ: "123.45")
+            val_str = str(val).strip().replace('"', '')
+            
+            # Xử lý các trường hợp:
+            # 1. Dấu phẩy làm dấu phân cách hàng nghìn: "30,580" -> "30580"
+            # 2. Dấu chấm làm dấu phân cách hàng nghìn: "30.580" -> "30580"
+            # 3. Dấu chấm làm dấu thập phân: "123.45" -> "123.45"
+            
+            # Nếu có cả dấu phẩy và dấu chấm: dấu phẩy là phân cách hàng nghìn, dấu chấm là thập phân
+            if ',' in val_str and '.' in val_str:
+                # Ví dụ: "30,580.50" -> "30580.50"
+                val_str = val_str.replace(',', '')
+            # Nếu chỉ có dấu phẩy: dấu phẩy là phân cách hàng nghìn
+            elif ',' in val_str:
+                val_str = val_str.replace(',', '')
+            # Nếu chỉ có dấu chấm: cần kiểm tra xem là phân cách hàng nghìn hay thập phân
+            elif '.' in val_str:
+                parts = val_str.split('.')
+                if len(parts) == 2:
+                    # Nếu phần sau dấu chấm có <= 2 chữ số -> là số thập phân
+                    if len(parts[1]) <= 2:
+                        # Giữ nguyên (ví dụ: "123.45")
                         pass
                     else:
-                        # Có thể là dấu phân cách hàng nghìn (ví dụ: "6.800")
+                        # Phần sau dấu chấm có > 2 chữ số -> là dấu phân cách hàng nghìn
+                        # Ví dụ: "30.580" -> "30580"
                         val_str = val_str.replace('.', '')
+                else:
+                    # Có nhiều dấu chấm -> tất cả đều là phân cách hàng nghìn
+                    # Ví dụ: "1.234.567" -> "1234567"
+                    val_str = val_str.replace('.', '')
+            
             try:
                 return float(val_str)
             except:
@@ -1377,14 +1627,14 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         result_df['route_type'] = result_df.apply(lambda row: classify_route_type(row['nhom_tuyen'], row['route']), axis=1)
         result_df['period'] = period_name
         
-        # Nhóm theo route và route_type - lấy dòng đầu tiên (không tổng hợp)
-        # Vì mỗi route trong file CSV chỉ nên có một giá trị kế hoạch duy nhất
-        # Giữ lại nhom_tuyen để có thể tìm kiếm sau này
+        # QUAN TRỌNG: Nếu có nhiều dòng cho cùng một route (có thể từ các nguồn khác nhau),
+        # lấy giá trị lớn nhất để đảm bảo lấy đúng giá trị từ tổng Công ty
+        # (giá trị tổng Công ty thường lớn hơn giá trị từ các khu vực cụ thể)
         result_df = result_df.groupby(['route', 'route_type', 'period']).agg({
-            'plan_customers': 'first',
-            'plan_revenue': 'first',
-            'plan_profit': 'first',
-            'nhom_tuyen': 'first'  # Giữ lại nhom_tuyen
+            'plan_customers': 'max',  # Lấy giá trị lớn nhất
+            'plan_revenue': 'max',    # Lấy giá trị lớn nhất (thường là tổng Công ty)
+            'plan_profit': 'max',     # Lấy giá trị lớn nhất
+            'nhom_tuyen': 'first'     # Giữ lại nhom_tuyen (lấy giá trị đầu tiên)
         }).reset_index()
         
         # Chỉ giữ lại các cột cần thiết (sau khi groupby)

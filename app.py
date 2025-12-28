@@ -1639,20 +1639,48 @@ with tab1:
             # Sử dụng route_group (Tuyến tour) để merge với all_plan_data, vì all_plan_data có route là Tuyến tour
             # Nếu không có route_group, dùng route
             merge_col = 'route_group' if 'route_group' in etour_seats_data.columns and not etour_seats_data['route_group'].isna().all() else 'route'
-            etour_seats_data['route_normalized'] = etour_seats_data[merge_col].astype(str).str.strip().str.upper()
+            
+            def normalize_route_name(name):
+                """Chuẩn hóa tên route để merge tốt hơn"""
+                if pd.isna(name) or name == '':
+                    return ''
+                name_str = str(name).strip().upper()
+                # Xử lý các trường hợp đặc biệt - mapping cụ thể
+                route_mapping = {
+                    'SING - MÃ': 'SINGAPORE MALAYSIA',
+                    'SING - MA': 'SINGAPORE MALAYSIA',
+                    'SING-MÃ': 'SINGAPORE MALAYSIA',
+                    'SING-MA': 'SINGAPORE MALAYSIA',
+                    'SING MÃ': 'SINGAPORE MALAYSIA',
+                    'SING MA': 'SINGAPORE MALAYSIA',
+                }
+                # Kiểm tra mapping trước
+                for key, value in route_mapping.items():
+                    if key in name_str:
+                        return value
+                # Nếu có "SING" và ("MÃ" hoặc "MA" hoặc "MALAYSIA")
+                if 'SING' in name_str and ('MÃ' in name_str or 'MA' in name_str or 'MALAYSIA' in name_str):
+                    return 'SINGAPORE MALAYSIA'
+                # Loại bỏ các ký tự đặc biệt và khoảng trắng thừa
+                name_str = name_str.replace('-', ' ').replace('_', ' ')
+                name_str = ' '.join(name_str.split())  # Loại bỏ khoảng trắng thừa
+                return name_str
+            
+            etour_seats_data['route_normalized'] = etour_seats_data[merge_col].apply(normalize_route_name)
             
             all_plan_data_for_merge = all_plan_data.copy()
-            all_plan_data_for_merge['route_normalized'] = all_plan_data_for_merge['route'].astype(str).str.strip().str.upper()
+            all_plan_data_for_merge['route_normalized'] = all_plan_data_for_merge['route'].apply(normalize_route_name)
             
             # Filter theo period nếu có
             if 'period' in all_plan_data_for_merge.columns:
                 all_plan_data_for_merge = all_plan_data_for_merge[all_plan_data_for_merge['period'] == selected_period].copy()
             
             # Tạo lookup table từ all_plan_data (groupby để đảm bảo mỗi route chỉ có 1 giá trị)
-            # Sum các giá trị nếu có nhiều dòng (có thể từ các nguồn khác nhau)
+            # Lấy giá trị lớn nhất để đảm bảo lấy đúng giá trị từ tổng Công ty
+            # (giá trị tổng Công ty thường lớn hơn giá trị từ các khu vực cụ thể)
             plan_lookup = all_plan_data_for_merge.groupby(['route_normalized', 'route_type']).agg({
-                'plan_customers': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
-                'plan_revenue': 'first'     # Mỗi route chỉ có 1 giá trị kế hoạch
+                'plan_customers': 'max',  # Lấy giá trị lớn nhất (thường là tổng Công ty)
+                'plan_revenue': 'max'     # Lấy giá trị lớn nhất (thường là tổng Công ty)
             }).reset_index()
             plan_lookup = plan_lookup.rename(columns={
                 'plan_revenue': 'plan_revenue_plan',
@@ -1660,11 +1688,37 @@ with tab1:
             })
             
             # Merge plan_customers và plan_revenue từ all_plan_data
+            # Thử merge với cả route_type trước
             etour_seats_data = etour_seats_data.merge(
                 plan_lookup[['route_normalized', 'route_type', 'plan_customers_plan', 'plan_revenue_plan']],
                 on=['route_normalized', 'route_type'],
                 how='left'
             )
+            
+            # Nếu merge không match được (plan_revenue_plan là NaN), thử merge chỉ dựa trên route_normalized
+            unmatched_mask = etour_seats_data['plan_revenue_plan'].isna()
+            if unmatched_mask.any():
+                # Tạo lookup chỉ dựa trên route_normalized (không có route_type)
+                plan_lookup_simple = all_plan_data_for_merge.groupby('route_normalized').agg({
+                    'plan_customers': 'max',
+                    'plan_revenue': 'max'
+                }).reset_index()
+                plan_lookup_simple = plan_lookup_simple.rename(columns={
+                    'plan_revenue': 'plan_revenue_plan_simple',
+                    'plan_customers': 'plan_customers_plan_simple'
+                })
+                
+                # Merge lại cho các route chưa match
+                etour_unmatched = etour_seats_data[unmatched_mask].copy()
+                etour_unmatched = etour_unmatched.merge(
+                    plan_lookup_simple[['route_normalized', 'plan_customers_plan_simple', 'plan_revenue_plan_simple']],
+                    on='route_normalized',
+                    how='left'
+                )
+                
+                # Cập nhật lại giá trị cho các route đã match
+                etour_seats_data.loc[unmatched_mask, 'plan_revenue_plan'] = etour_unmatched['plan_revenue_plan_simple'].values
+                etour_seats_data.loc[unmatched_mask, 'plan_customers_plan'] = etour_unmatched['plan_customers_plan_simple'].values
             
             # Thay thế plan_revenue và plan_seats từ file kế hoạch nếu có
             # plan_seats = plan_customers (LK)
@@ -1674,7 +1728,15 @@ with tab1:
             if 'plan_revenue_plan' in etour_seats_data.columns:
                 # Ưu tiên dùng plan_revenue từ file kế hoạch (đã là VND và đã filter theo region)
                 # Chỉ dùng số từ etour nếu merge không match
+                # Nếu plan_revenue_plan là NaN, có nghĩa là merge không match được
+                # Trong trường hợp này, vẫn dùng giá trị từ etour nhưng có thể cần kiểm tra lại
                 etour_seats_data['plan_revenue'] = etour_seats_data['plan_revenue_plan'].fillna(etour_seats_data['plan_revenue_etour'])
+                
+                # Debug: Kiểm tra các route không match được
+                unmatched_routes = etour_seats_data[etour_seats_data['plan_revenue_plan'].isna() & (etour_seats_data['route_type'] == 'Outbound')]
+                if not unmatched_routes.empty and len(unmatched_routes) <= 20:  # Chỉ log nếu không quá nhiều
+                    # Có thể log ra để debug nhưng không hiển thị cho user
+                    pass
             
             # Xóa cột tạm
             etour_seats_data = etour_seats_data.drop(columns=[

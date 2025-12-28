@@ -1072,14 +1072,16 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
     Cấu trúc CSV:
     - Dòng 1-2: Tiêu đề
     - Dòng 3: Số thứ tự
-    - Dòng 4: Tên các đơn vị/khu vực (Công ty, Mien Bac, Mien Trung, TPHCM & DNB, Mien Tay)
+    - Dòng 4: Tên các đơn vị/khu vực (Công ty, Mien Bac, Mien Trung, Mien Nam, ...)
     - Dòng 5 (index 4): Header: Nhom tuyen, Tuyến Tour, LK, DT (tr.d), LG (tr.d)...
     - Dòng 6 trở đi: Dữ liệu
     
     Args:
         sheet_url: URL của Google Sheet
         period_name: Tên giai đoạn ('TẾT' hoặc 'KM XUÂN')
-        region_filter: Tên khu vực để filter ('Mien Bac', 'Mien Trung', 'TPHCM & DNB', 'Mien Tay', hoặc None/'Tất cả' để lấy tổng Công ty)
+        region_filter: Tên khu vực để filter ('Tất cả', 'Mien Bac', 'Mien Trung', 'Mien Nam', hoặc None)
+                      Nếu None hoặc 'Tất cả', sẽ lấy tổng Công ty (cột C, D, E)
+                      Nếu có region_filter cụ thể, sẽ lấy cột tương ứng với khu vực đó
     
     Returns: DataFrame với columns: route, route_type, plan_customers, plan_revenue, plan_profit, period
     """
@@ -1109,18 +1111,6 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         # Đọc CSV
         text = resp.content.decode('utf-8', errors='replace')
         lines = text.split('\n')
-        
-        # Đọc dòng 4 (index 3) để biết thứ tự các khu vực
-        region_row_idx = 3 if len(lines) > 3 else None
-        region_names = []
-        if region_row_idx is not None:
-            try:
-                region_row = pd.read_csv(io.StringIO(lines[region_row_idx]), header=None, skipinitialspace=True)
-                if not region_row.empty:
-                    # Lấy các giá trị từ dòng 4 (bỏ qua 2 cột đầu: Nhom tuyen và Tuyến Tour)
-                    region_names = region_row.iloc[0, 2:].astype(str).tolist() if len(region_row.columns) > 2 else []
-            except:
-                pass
         
         # Tìm dòng header (dòng 5, index 4) - chứa "Nhom tuyen" và "Tuyến Tour"
         header_idx = None
@@ -1161,78 +1151,86 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         if route_col is None:
             return pd.DataFrame()
         
-        # Tìm cột LK, DT (tr.d), LG (tr.d) tương ứng với region_filter
-        # Nếu region_filter là None hoặc "Tất cả", lấy từ cột đầu tiên (tổng Công ty)
-        # Nếu có region_filter, tìm cột tương ứng với khu vực đó
+        # Đọc dòng 4 (index 3) để lấy tên các khu vực
+        region_row_idx = 3  # Dòng 4 (index 3)
+        region_headers = []
+        if len(lines) > region_row_idx:
+            region_line = lines[region_row_idx]
+            region_headers = [col.strip() for col in region_line.split(',')]
+        
+        # Xác định cột cần lấy dựa trên region_filter
         customers_col = None
         revenue_col = None
         profit_col = None
         
-        # Xác định group index dựa trên region_filter
-        # Mỗi khu vực có 3 cột (LK, DT, LG), group index = 0 cho Công ty, 1 cho Mien Bac, 2 cho Mien Trung, etc.
-        group_index = 0  # Mặc định: group 0 (tổng Công ty)
-        
+        # Chuẩn hóa region_filter
         if region_filter and region_filter != 'Tất cả':
-            # Mapping tên khu vực sang group index
-            region_upper = str(region_filter).upper()
+            region_filter_upper = str(region_filter).upper().strip()
+            # Map tên khu vực
             region_mapping = {
-                'MIEN BAC': 1,
-                'MIEN TRUNG': 2,
-                'TPHCM & DNB': 3,
-                'TPHCM & DN': 3,
-                'MIEN TAY': 4
+                'MIEN BAC': 'MIEN BAC',
+                'MIỀN BẮC': 'MIEN BAC',
+                'MIEN TRUNG': 'MIEN TRUNG',
+                'MIỀN TRUNG': 'MIEN TRUNG',
+                'MIEN NAM': 'MIEN NAM',
+                'MIỀN NAM': 'MIEN NAM'
             }
-            
-            for key, idx in region_mapping.items():
-                if key in region_upper or region_upper in key:
-                    group_index = idx
+            target_region = region_mapping.get(region_filter_upper, region_filter_upper)
+        else:
+            target_region = None  # Dùng tổng Công ty
+        
+        # Tìm cột LK, DT, LG dựa trên region_filter
+        if target_region is None:
+            # Dùng tổng Công ty: Cột C, D, E (index 2, 3, 4)
+            if len(df.columns) > 2:
+                customers_col = df.columns[2]  # Cột C: LK
+            if len(df.columns) > 3:
+                revenue_col = df.columns[3]  # Cột D: DT (tr.d)
+            if len(df.columns) > 4:
+                profit_col = df.columns[4]  # Cột E: LG (tr.d)
+        else:
+            # Tìm cột của khu vực cụ thể
+            # Tìm vị trí của khu vực trong dòng 4
+            region_col_start = None
+            for i, header in enumerate(region_headers):
+                if target_region in str(header).upper():
+                    # Cột khu vực bắt đầu từ vị trí này
+                    # Mỗi khu vực có 3 cột: LK, DT, LG
+                    region_col_start = i
                     break
-        
-        # Tìm tất cả các cột LK, DT, LG và nhóm chúng theo thứ tự
-        lk_cols = []
-        dt_cols = []
-        lg_cols = []
-        
-        for col in df.columns:
-            col_upper = str(col).upper()
-            if col != nhom_tuyen_col and col != route_col:
-                if col_upper == 'LK' or 'LƯỢT KHÁCH' in col_upper:
-                    lk_cols.append(col)
-                elif 'DT (TR.D)' in col_upper or 'DT(TR.D)' in col_upper or ('DT' in col_upper and 'TR.D' in col_upper):
-                    dt_cols.append(col)
-                elif 'LG (TR.D)' in col_upper or 'LG(TR.D)' in col_upper or ('LG' in col_upper and 'TR.D' in col_upper):
-                    lg_cols.append(col)
-        
-        # Chọn cột tương ứng với group_index
-        # group_index 0 = cột đầu tiên (tổng Công ty), group_index 1 = cột thứ 2 (Mien Bac), etc.
-        if lk_cols and group_index < len(lk_cols):
-            customers_col = lk_cols[group_index]
-        elif len(df.columns) > 2:
-            # Fallback: dùng vị trí cột (theo CSV mẫu)
-            # Cột C (index 2): LK cho group 0, Cột F (index 5): LK cho group 1, etc.
-            col_idx = 2 + (group_index * 3)
-            if col_idx < len(df.columns):
-                customers_col = df.columns[col_idx]
+            
+            if region_col_start is not None and len(df.columns) > region_col_start:
+                # Cột LK của khu vực
+                if len(df.columns) > region_col_start:
+                    customers_col = df.columns[region_col_start]
+                # Cột DT của khu vực
+                if len(df.columns) > region_col_start + 1:
+                    revenue_col = df.columns[region_col_start + 1]
+                # Cột LG của khu vực
+                if len(df.columns) > region_col_start + 2:
+                    profit_col = df.columns[region_col_start + 2]
             else:
-                customers_col = df.columns[2]  # Fallback về cột đầu tiên
+                # Fallback: tìm bằng tên cột
+                for col in df.columns:
+                    col_upper = str(col).upper()
+                    if col != nhom_tuyen_col and col != route_col:
+                        if customers_col is None and (col_upper == 'LK' or 'LƯỢT KHÁCH' in col_upper):
+                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
+                                customers_col = col
+                        elif revenue_col is None and ('DT (TR.D)' in col_upper or 'DT(TR.D)' in col_upper or ('DT' in col_upper and 'TR.D' in col_upper)):
+                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
+                                revenue_col = col
+                        elif profit_col is None and ('LG (TR.D)' in col_upper or 'LG(TR.D)' in col_upper or ('LG' in col_upper and 'TR.D' in col_upper)):
+                            if target_region in col_upper or any(region in col_upper for region in ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM'] if target_region in region):
+                                profit_col = col
         
-        if dt_cols and group_index < len(dt_cols):
-            revenue_col = dt_cols[group_index]
-        elif len(df.columns) > 3:
-            col_idx = 3 + (group_index * 3)
-            if col_idx < len(df.columns):
-                revenue_col = df.columns[col_idx]
-            else:
-                revenue_col = df.columns[3]  # Fallback về cột đầu tiên
-        
-        if lg_cols and group_index < len(lg_cols):
-            profit_col = lg_cols[group_index]
-        elif len(df.columns) > 4:
-            col_idx = 4 + (group_index * 3)
-            if col_idx < len(df.columns):
-                profit_col = df.columns[col_idx]
-            else:
-                profit_col = df.columns[4]  # Fallback về cột đầu tiên
+        # Fallback cuối cùng: dùng cột C, D, E nếu không tìm thấy
+        if customers_col is None and len(df.columns) > 2:
+            customers_col = df.columns[2]
+        if revenue_col is None and len(df.columns) > 3:
+            revenue_col = df.columns[3]
+        if profit_col is None and len(df.columns) > 4:
+            profit_col = df.columns[4]
         
         # Tạo DataFrame kết quả
         result_df = pd.DataFrame()
@@ -1244,6 +1242,21 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
             if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip() == 'nan':
                 return 0
             val_str = str(val).strip().replace(',', '').replace('"', '')
+            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn (ví dụ: "6.800" = 6800)
+            # Nếu có dấu chấm và không có dấu phẩy, coi dấu chấm là dấu phân cách hàng nghìn
+            if '.' in val_str and ',' not in val_str:
+                # Đếm số dấu chấm - nếu có nhiều hơn 1, có thể là dấu phân cách hàng nghìn
+                if val_str.count('.') > 1:
+                    val_str = val_str.replace('.', '')
+                elif val_str.count('.') == 1:
+                    # Nếu chỉ có 1 dấu chấm, kiểm tra xem có phải là số thập phân không
+                    parts = val_str.split('.')
+                    if len(parts) == 2 and len(parts[1]) <= 2:
+                        # Có thể là số thập phân (ví dụ: "123.45")
+                        pass
+                    else:
+                        # Có thể là dấu phân cách hàng nghìn (ví dụ: "6.800")
+                        val_str = val_str.replace('.', '')
             try:
                 return float(val_str)
             except:
@@ -1470,11 +1483,24 @@ def load_etour_seats_data(sheet_url):
         plan_revenue_col = None
         dom_out_col = None
         route_group_col = None
+        region_col = None  # Cột "KHU VỰC KINH DOANH"
+        period_col = None  # Cột "GIAI ĐOẠN"
         
         for col in df.columns:
             col_upper = str(col).upper()
-            if 'TUYẾN TOUR' in col_upper or 'TUYEN TOUR' in col_upper:
-                route_col = col
+            # Tìm cột "Tour" (cột 0) - tên tour cụ thể
+            if ('TOUR' in col_upper and 'TUYẾN' not in col_upper and 'TUYEN' not in col_upper) or (len(df.columns) > 0 and col == df.columns[0]):
+                if route_col is None:  # Chỉ lấy cột đầu tiên nếu có "Tour"
+                    route_col = col
+            # Tìm cột "Tuyến tour" (cột 10) - dùng để group
+            elif 'TUYẾN TOUR' in col_upper or 'TUYEN TOUR' in col_upper:
+                # Nếu là cột 10, đây là route_group
+                if len(df.columns) > 10 and col == df.columns[10]:
+                    route_group_col = col
+                else:
+                    # Nếu không phải cột 10, có thể là route_col (nếu chưa có)
+                    if route_col is None:
+                        route_col = col
             elif 'SL DỰ KIẾN' in col_upper or 'SL DU KIEN' in col_upper:
                 plan_seats_col = col
             elif 'SL ĐÃ BÁN' in col_upper or 'SL DA BAN' in col_upper:
@@ -1489,24 +1515,35 @@ def load_etour_seats_data(sheet_url):
                 dom_out_col = col
             elif 'TUYẾN TOUR MỚI' in col_upper or 'TUYEN TOUR MOI' in col_upper:
                 route_group_col = col
+            elif 'KHU VỰC KINH DOANH' in col_upper or 'KHU VUC KINH DOANH' in col_upper:
+                region_col = col
+            elif 'GIAI ĐOẠN' in col_upper or 'GIAI DOAN' in col_upper:
+                period_col = col
         
         # Nếu không tìm thấy bằng tên, dùng vị trí cột (theo CSV mẫu)
+        # Cấu trúc CSV: Tour(0), SL Dự kiến(1), SL đã bán(2), SL còn lại(3), Tỷ lệ(4), 
+        # Doanh số đã bán(5), Doanh số dự kiến(6), Tỷ lệ(7), ĐẦU KHỞI HÀNH(8), 
+        # KHU VỰC KINH DOANH(9), Tuyến tour(10), DOM/OUT(11), GIAI ĐOẠN(12)
         if route_col is None and len(df.columns) > 0:
-            route_col = df.columns[0]  # Cột A: Tuyến tour
+            route_col = df.columns[0]  # Cột 0: Tour (tên tour cụ thể)
         if plan_seats_col is None and len(df.columns) > 1:
-            plan_seats_col = df.columns[1]  # Cột B: SL Dự kiến
+            plan_seats_col = df.columns[1]  # Cột 1: SL Dự kiến
         if actual_seats_col is None and len(df.columns) > 2:
-            actual_seats_col = df.columns[2]  # Cột C: SL đã bán
+            actual_seats_col = df.columns[2]  # Cột 2: SL đã bán
         if remaining_seats_col is None and len(df.columns) > 3:
-            remaining_seats_col = df.columns[3]  # Cột D: SL còn lại
+            remaining_seats_col = df.columns[3]  # Cột 3: SL còn lại
         if actual_revenue_col is None and len(df.columns) > 5:
-            actual_revenue_col = df.columns[5]  # Cột F: Doanh số đã bán
+            actual_revenue_col = df.columns[5]  # Cột 5: Doanh số đã bán
         if plan_revenue_col is None and len(df.columns) > 6:
-            plan_revenue_col = df.columns[6]  # Cột G: Doanh số dự kiến
+            plan_revenue_col = df.columns[6]  # Cột 6: Doanh số dự kiến
         if dom_out_col is None and len(df.columns) > 11:
-            dom_out_col = df.columns[11]  # Cột L: DOM/OUT
+            dom_out_col = df.columns[11]  # Cột 11: DOM/OUT
         if route_group_col is None and len(df.columns) > 10:
-            route_group_col = df.columns[10]  # Cột K: TUYẾN TOUR MỚI
+            route_group_col = df.columns[10]  # Cột 10: Tuyến tour (dùng để group)
+        if region_col is None and len(df.columns) > 9:
+            region_col = df.columns[9]  # Cột 9: KHU VỰC KINH DOANH
+        if period_col is None and len(df.columns) > 12:
+            period_col = df.columns[12]  # Cột 12: GIAI ĐOẠN
         
         if route_col is None:
             return pd.DataFrame()
@@ -1515,15 +1552,38 @@ def load_etour_seats_data(sheet_url):
         result_df = pd.DataFrame()
         result_df['route'] = df[route_col].astype(str).str.strip()
         
+        # Thêm cột region_unit (Khu vực Đơn Vị)
+        if region_col:
+            result_df['region_unit'] = df[region_col].astype(str).str.strip()
+        else:
+            result_df['region_unit'] = ''
+        
+        # Thêm cột period (Giai đoạn)
+        if period_col:
+            result_df['period'] = df[period_col].astype(str).str.strip()
+        else:
+            result_df['period'] = ''
+        
         # Parse số liệu
         def parse_value(val):
             if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip().upper() == 'NAN':
                 return 0
             val_str = str(val).strip().replace(',', '').replace('"', '')
-            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn (ví dụ: "6.995" = 6995)
+            # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn (ví dụ: "6.995" = 6995, "333.460.000" = 333460000)
             # Nếu có dấu chấm và không có dấu phẩy, coi dấu chấm là dấu phân cách hàng nghìn
             if '.' in val_str and ',' not in val_str:
-                val_str = val_str.replace('.', '')
+                # Đếm số dấu chấm - nếu có nhiều hơn 1, có thể là dấu phân cách hàng nghìn
+                if val_str.count('.') > 1:
+                    val_str = val_str.replace('.', '')
+                elif val_str.count('.') == 1:
+                    # Nếu chỉ có 1 dấu chấm, kiểm tra xem có phải là số thập phân không
+                    parts = val_str.split('.')
+                    if len(parts) == 2 and len(parts[1]) <= 2:
+                        # Có thể là số thập phân (ví dụ: "123.45")
+                        pass
+                    else:
+                        # Có thể là dấu phân cách hàng nghìn (ví dụ: "123.456")
+                        val_str = val_str.replace('.', '')
             try:
                 return float(val_str)
             except:
@@ -1579,9 +1639,14 @@ def load_etour_seats_data(sheet_url):
             (~result_df['route'].astype(str).str.upper().str.contains('NAN', na=False))
         ].copy()
         
-        # Nhóm theo route_group và route_type để tổng hợp (nếu có nhiều dòng cho cùng một route_group)
-        # Nhưng giữ lại route để hiển thị chi tiết
-        result_df = result_df.groupby(['route', 'route_group', 'route_type']).agg({
+        # Nhóm theo route, route_group, route_type, region_unit và period để tổng hợp
+        # QUAN TRỌNG: Phải groupby theo cả region_unit và period để tránh sum các dòng từ các region/period khác
+        # Nhưng giữ lại route, region_unit và period để hiển thị chi tiết
+        groupby_cols = ['route', 'route_type', 'region_unit', 'period']
+        if 'route_group' in result_df.columns and not result_df['route_group'].isna().all():
+            groupby_cols.insert(1, 'route_group')  # Chèn route_group vào vị trí thứ 2
+        
+        result_df = result_df.groupby(groupby_cols).agg({
             'plan_seats': 'sum',
             'actual_seats': 'sum',
             'remaining_seats': 'sum',
@@ -1610,23 +1675,25 @@ def create_seats_tracking_chart(data, title=''):
         return fig
     
     # Nhóm theo route_group để tổng hợp (nếu có nhiều route trong cùng một route_group)
+    # QUAN TRỌNG: plan_revenue và plan_seats dùng 'first' vì mỗi route_group chỉ có 1 giá trị kế hoạch duy nhất
+    # actual_revenue và actual_seats dùng 'sum' để sum các dòng từ cùng route_group
     if 'route_group' in data.columns and not data['route_group'].isna().all():
         # Sử dụng route_group làm x-axis nếu có
         grouped_data = data.groupby('route_group').agg({
-            'plan_seats': 'sum',
-            'actual_seats': 'sum',
-            'remaining_seats': 'sum',
-            'plan_revenue': 'sum',
-            'actual_revenue': 'sum'
+            'plan_seats': 'first',  # Mỗi route_group chỉ có 1 giá trị kế hoạch
+            'actual_seats': 'sum',  # Sum các dòng từ cùng route_group
+            'remaining_seats': 'sum',  # Sum các dòng từ cùng route_group
+            'plan_revenue': 'first',  # Mỗi route_group chỉ có 1 giá trị kế hoạch
+            'actual_revenue': 'sum'  # Sum các dòng từ cùng route_group
         }).reset_index()
     else:
         # Sử dụng route làm x-axis
         grouped_data = data.groupby('route').agg({
-            'plan_seats': 'sum',
-            'actual_seats': 'sum',
-            'remaining_seats': 'sum',
-            'plan_revenue': 'sum',
-            'actual_revenue': 'sum'
+            'plan_seats': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
+            'actual_seats': 'sum',  # Sum các dòng từ cùng route
+            'remaining_seats': 'sum',  # Sum các dòng từ cùng route
+            'plan_revenue': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
+            'actual_revenue': 'sum'  # Sum các dòng từ cùng route
         }).reset_index()
         grouped_data['route_group'] = grouped_data['route']
     

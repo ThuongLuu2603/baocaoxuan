@@ -615,7 +615,6 @@ else:
 
 
 
-
 # ============================================================
 # MAIN TABS
 # ============================================================
@@ -717,7 +716,7 @@ with tab1:
                 marker_color='#636EFA',  # Màu xanh
                 hovertemplate='<b>%{x}</b><br>DT: %{y:.1f}%<extra></extra>'
             ))
-
+            
             # Cột Lãi Gộp (LG) - màu cam
             fig.add_trace(go.Bar(
                 name='LG',
@@ -839,9 +838,9 @@ with tab1:
             st.rerun()
 
 
-# ============================================================
+    # ============================================================
     # PHẦN NỘI DUNG DASHBOARD THEO DÕI SẢN PHẨM - PHẦN 1
-# ============================================================
+    # ============================================================
     # Chỉ hiển thị warning nếu có URL nhưng load thất bại
     if not used_sheet and sheet_url_provided:
         st.warning("Google Sheet chưa được đọc thành công — Một số biểu đồ có thể không hiển thị dữ liệu.")
@@ -856,9 +855,9 @@ with tab1:
                 st.rerun()
         with col_retry2:
             st.info("Vui lòng kiểm tra URL/Quyền truy cập của Google Sheet rồi nhấn 'Thử lại'.")
-        st.markdown("---")
+    st.markdown("---")
     
-
+    
     
     # ========== BIỂU ĐỒ TỐC ĐỘ ĐẠT KẾ HOẠCH THEO TUYẾN ==========
     st.markdown("### Tốc độ đạt Kế hoạch theo Tuyến")
@@ -882,7 +881,7 @@ with tab1:
             st.session_state[cache_key_route] = route_performance_data
     
     if not route_performance_data.empty:
-        # Lấy các filter từ sidebar (sử dụng key đã được lưu ở dòng 260-263)
+        # Lấy các filter từ sidebar
         selected_period = st.session_state.get('filter_period', 'KM XUÂN')
         selected_region = st.session_state.get('filter_region', 'Tất cả')
         selected_unit = st.session_state.get('filter_unit', 'Tất cả')
@@ -1008,7 +1007,7 @@ with tab1:
                 )
         
         st.markdown("---")
-
+        
         # HÀNG 2: OUTBOUND (3 biểu đồ)
         st.markdown("#### Outbound")
         
@@ -1017,7 +1016,7 @@ with tab1:
         
         # 3 biểu đồ Outbound
         col1, col2, col3 = st.columns(3)
-        
+
         with col1:
             if not outbound_data.empty:
                 fig_out_cust = create_route_performance_chart(
@@ -1028,7 +1027,7 @@ with tab1:
                 st.plotly_chart(fig_out_cust, use_container_width=True, key="route_out_cust")
             else:
                 st.info("Không có dữ liệu")
-        
+
         with col2:
             if not outbound_data.empty:
                 fig_out_rev = create_route_performance_chart(
@@ -1138,13 +1137,25 @@ with tab1:
     plan_tet_url = st.session_state.get('plan_tet_url', DEFAULT_PLAN_TET_URL)
     plan_xuan_url = st.session_state.get('plan_xuan_url', DEFAULT_PLAN_XUAN_URL)
     
-    # Lấy region_filter từ sidebar (nếu có)
-    selected_region_for_plan = st.session_state.get('filter_region', 'Tất cả')
-    region_filter = None if selected_region_for_plan == 'Tất cả' else selected_region_for_plan
+    # Lấy region_filter từ session_state
+    selected_region = st.session_state.get('filter_region', 'Tất cả')
+    region_filter = selected_region if selected_region != 'Tất cả' else None
     
-    # Cache key cần bao gồm region_filter vì dữ liệu sẽ khác nhau tùy theo filter
+    # Cache key bao gồm region_filter
     cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}_{region_filter}'
     cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}_{region_filter}'
+    
+    # Kiểm tra xem region_filter có thay đổi không
+    last_region_filter = st.session_state.get('last_region_filter', None)
+    if last_region_filter != region_filter:
+        # Xóa cache cũ nếu region_filter thay đổi
+        old_cache_key_tet = f'plan_tet_data_{plan_tet_url}_{last_region_filter}'
+        old_cache_key_xuan = f'plan_xuan_data_{plan_xuan_url}_{last_region_filter}'
+        if old_cache_key_tet in st.session_state:
+            del st.session_state[old_cache_key_tet]
+        if old_cache_key_xuan in st.session_state:
+            del st.session_state[old_cache_key_xuan]
+        st.session_state['last_region_filter'] = region_filter
     
     if cache_key_plan_tet not in st.session_state:
         with st.spinner('Đang tải kế hoạch Tết...'):
@@ -1204,14 +1215,19 @@ with tab1:
             
             # Tạo biểu đồ line chart
             # Nhóm theo route để tổng hợp (nếu có nhiều period cho cùng route)
-            # Lưu ý: plan_revenue là duy nhất cho mỗi route, nên dùng 'first'
             domestic_chart_data = domestic_completion.groupby('route').agg({
-                'completion_customers': 'mean',
-                'completion_revenue': 'mean',
-                'completion_profit': 'mean',
+                'plan_customers': 'first',
+                'num_customers': 'sum',
+                'plan_revenue': 'first',
                 'revenue': 'sum',
-                'plan_revenue': 'first'  # Kế hoạch là duy nhất cho mỗi route
+                'plan_profit': 'first',
+                'gross_profit': 'sum'
             }).reset_index()
+            
+            # Tính lại completion rates từ tổng actual/plan
+            domestic_chart_data['completion_customers'] = (domestic_chart_data['num_customers'] / domestic_chart_data['plan_customers'].replace(0, np.nan) * 100).fillna(0)
+            domestic_chart_data['completion_revenue'] = (domestic_chart_data['revenue'] / domestic_chart_data['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+            domestic_chart_data['completion_profit'] = (domestic_chart_data['gross_profit'] / domestic_chart_data['plan_profit'].replace(0, np.nan) * 100).fillna(0)
             
             fig_domestic = create_completion_progress_chart(
                 domestic_chart_data,
@@ -1219,56 +1235,51 @@ with tab1:
             )
             st.plotly_chart(fig_domestic, use_container_width=True, key="completion_domestic_chart")
             
-            # Nút xem chi tiết
+            # Bảng chi tiết Nội địa
             with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                # Tạo bảng chi tiết từ dữ liệu đã groupby
-                detail_df = domestic_chart_data.copy()
-                
-                # Cần merge lại với dữ liệu gốc để lấy các cột còn thiếu
-                # Lưu ý: plan_customers, plan_revenue, plan_profit là duy nhất cho mỗi route, nên dùng 'first'
-                # num_customers, revenue, gross_profit có thể từ nhiều đơn vị, nên dùng 'sum'
-                detail_full = domestic_completion.groupby('route').agg({
-                    'plan_customers': 'first',  # Kế hoạch là duy nhất cho mỗi route
-                    'num_customers': 'sum',     # Thực tế có thể từ nhiều đơn vị
-                    'plan_revenue': 'first',   # Kế hoạch là duy nhất cho mỗi route
-                    'revenue': 'sum',           # Thực tế có thể từ nhiều đơn vị
-                    'plan_profit': 'first',     # Kế hoạch là duy nhất cho mỗi route
-                    'gross_profit': 'sum'       # Thực tế có thể từ nhiều đơn vị
+                # Tính toán lại từ dữ liệu gốc để đảm bảo tính chính xác
+                domestic_detail = domestic_completion.groupby('route').agg({
+                    'plan_customers': 'first',
+                    'num_customers': 'sum',
+                    'plan_revenue': 'first',
+                    'revenue': 'sum',
+                    'plan_profit': 'first',
+                    'gross_profit': 'sum'
                 }).reset_index()
                 
-                # Tính lại completion rates từ tổng
-                detail_full['completion_customers'] = detail_full.apply(
-                    lambda x: (x['num_customers'] / x['plan_customers'] * 100) if x['plan_customers'] > 0 else 0,
-                    axis=1
-                )
-                detail_full['completion_revenue'] = detail_full.apply(
-                    lambda x: (x['revenue'] / x['plan_revenue'] * 100) if x['plan_revenue'] > 0 else 0,
-                    axis=1
-                )
-                detail_full['completion_profit'] = detail_full.apply(
-                    lambda x: (x['gross_profit'] / x['plan_profit'] * 100) if x['plan_profit'] > 0 else 0,
-                    axis=1
-                )
+                # Tính lại phần trăm hoàn thành
+                domestic_detail['completion_customers_pct'] = (domestic_detail['num_customers'] / domestic_detail['plan_customers'].replace(0, np.nan) * 100).fillna(0)
+                domestic_detail['completion_revenue_pct'] = (domestic_detail['revenue'] / domestic_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+                domestic_detail['completion_profit_pct'] = (domestic_detail['gross_profit'] / domestic_detail['plan_profit'].replace(0, np.nan) * 100).fillna(0)
                 
-                # Sắp xếp theo completion_revenue giảm dần (giống biểu đồ)
-                detail_full = detail_full.sort_values('completion_revenue', ascending=False).reset_index(drop=True)
+                # Chuyển đổi đơn vị sang triệu đồng
+                domestic_detail['plan_revenue_tr'] = domestic_detail['plan_revenue'] / 1_000_000
+                domestic_detail['revenue_tr'] = domestic_detail['revenue'] / 1_000_000
+                domestic_detail['plan_profit_tr'] = domestic_detail['plan_profit'] / 1_000_000
+                domestic_detail['gross_profit_tr'] = domestic_detail['gross_profit'] / 1_000_000
                 
-                # Tạo bảng hiển thị - chuyển đổi từ VND sang triệu đồng (tr.đ)
-                display_df = pd.DataFrame({
-                    'STT': range(1, len(detail_full) + 1),
-                    'Tuyến tour': detail_full['route'],
-                    'LK kế hoạch': detail_full['plan_customers'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LK thực hiện': detail_full['num_customers'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt KH (%)': detail_full['completion_customers'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'DT kế hoạch (Tr.đ)': (detail_full['plan_revenue'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'DT đã bán (Tr.đ)': (detail_full['revenue'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch (%)': detail_full['completion_revenue'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'LG kế hoạch (tr.đ)': (detail_full['plan_profit'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LG thực hiện (tr.đ)': (detail_full['gross_profit'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch (%)': detail_full['completion_profit'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                # Tạo bảng chi tiết với format số có dấu phẩy
+                detail_table = pd.DataFrame({
+                    'STT': range(1, len(domestic_detail) + 1),
+                    'Tuyến tour': domestic_detail['route'],
+                    'LK kế hoạch': domestic_detail['plan_customers'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK thực hiện': domestic_detail['num_customers'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt KH (%)': domestic_detail['completion_customers_pct'].round(1).astype(str) + '%',
+                    'DT kế hoạch (Tr.đ)': domestic_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'DT đã bán (Tr.đ)': domestic_detail['revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch (%)': domestic_detail['completion_revenue_pct'].round(1).astype(str) + '%',
+                    'LG kế hoạch (tr.đ)': domestic_detail['plan_profit_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LG thực hiện (tr.đ)': domestic_detail['gross_profit_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'tốc độ đạt kết hoạch (%)': domestic_detail['completion_profit_pct'].round(1).astype(str) + '%'
                 })
                 
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
+                detail_table['_sort_revenue'] = domestic_detail['revenue_tr'].fillna(0)
+                detail_table = detail_table.sort_values('_sort_revenue', ascending=False).reset_index(drop=True)
+                detail_table = detail_table.drop(columns=['_sort_revenue'])
+                detail_table['STT'] = range(1, len(detail_table) + 1)
+                
+                st.dataframe(detail_table, use_container_width=True, hide_index=True)
         
         st.markdown("---")
         
@@ -1278,14 +1289,19 @@ with tab1:
             
             # Tạo biểu đồ line chart
             # Nhóm theo route để tổng hợp (nếu có nhiều period cho cùng route)
-            # Lưu ý: plan_revenue là duy nhất cho mỗi route, nên dùng 'first'
             outbound_chart_data = outbound_completion.groupby('route').agg({
-                'completion_customers': 'mean',
-                'completion_revenue': 'mean',
-                'completion_profit': 'mean',
+                'plan_customers': 'first',
+                'num_customers': 'sum',
+                'plan_revenue': 'first',
                 'revenue': 'sum',
-                'plan_revenue': 'first'  # Kế hoạch là duy nhất cho mỗi route
+                'plan_profit': 'first',
+                'gross_profit': 'sum'
             }).reset_index()
+            
+            # Tính lại completion rates từ tổng actual/plan
+            outbound_chart_data['completion_customers'] = (outbound_chart_data['num_customers'] / outbound_chart_data['plan_customers'].replace(0, np.nan) * 100).fillna(0)
+            outbound_chart_data['completion_revenue'] = (outbound_chart_data['revenue'] / outbound_chart_data['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+            outbound_chart_data['completion_profit'] = (outbound_chart_data['gross_profit'] / outbound_chart_data['plan_profit'].replace(0, np.nan) * 100).fillna(0)
             
             fig_outbound = create_completion_progress_chart(
                 outbound_chart_data,
@@ -1293,63 +1309,58 @@ with tab1:
             )
             st.plotly_chart(fig_outbound, use_container_width=True, key="completion_outbound_chart")
             
-            # Nút xem chi tiết
+            # Bảng chi tiết Outbound
             with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                # Tạo bảng chi tiết từ dữ liệu đã groupby
-                detail_df = outbound_chart_data.copy()
-                
-                # Cần merge lại với dữ liệu gốc để lấy các cột còn thiếu
-                # Lưu ý: plan_customers, plan_revenue, plan_profit là duy nhất cho mỗi route, nên dùng 'first'
-                # num_customers, revenue, gross_profit có thể từ nhiều đơn vị, nên dùng 'sum'
-                detail_full = outbound_completion.groupby('route').agg({
-                    'plan_customers': 'first',  # Kế hoạch là duy nhất cho mỗi route
-                    'num_customers': 'sum',     # Thực tế có thể từ nhiều đơn vị
-                    'plan_revenue': 'first',   # Kế hoạch là duy nhất cho mỗi route
-                    'revenue': 'sum',           # Thực tế có thể từ nhiều đơn vị
-                    'plan_profit': 'first',     # Kế hoạch là duy nhất cho mỗi route
-                    'gross_profit': 'sum'       # Thực tế có thể từ nhiều đơn vị
+                # Tính toán lại từ dữ liệu gốc để đảm bảo tính chính xác
+                outbound_detail = outbound_completion.groupby('route').agg({
+                    'plan_customers': 'first',
+                    'num_customers': 'sum',
+                    'plan_revenue': 'first',
+                    'revenue': 'sum',
+                    'plan_profit': 'first',
+                    'gross_profit': 'sum'
                 }).reset_index()
                 
-                # Tính lại completion rates từ tổng
-                detail_full['completion_customers'] = detail_full.apply(
-                    lambda x: (x['num_customers'] / x['plan_customers'] * 100) if x['plan_customers'] > 0 else 0,
-                    axis=1
-                )
-                detail_full['completion_revenue'] = detail_full.apply(
-                    lambda x: (x['revenue'] / x['plan_revenue'] * 100) if x['plan_revenue'] > 0 else 0,
-                    axis=1
-                )
-                detail_full['completion_profit'] = detail_full.apply(
-                    lambda x: (x['gross_profit'] / x['plan_profit'] * 100) if x['plan_profit'] > 0 else 0,
-                    axis=1
-                )
+                # Tính lại phần trăm hoàn thành
+                outbound_detail['completion_customers_pct'] = (outbound_detail['num_customers'] / outbound_detail['plan_customers'].replace(0, np.nan) * 100).fillna(0)
+                outbound_detail['completion_revenue_pct'] = (outbound_detail['revenue'] / outbound_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+                outbound_detail['completion_profit_pct'] = (outbound_detail['gross_profit'] / outbound_detail['plan_profit'].replace(0, np.nan) * 100).fillna(0)
                 
-                # Sắp xếp theo completion_revenue giảm dần (giống biểu đồ)
-                detail_full = detail_full.sort_values('completion_revenue', ascending=False).reset_index(drop=True)
+                # Chuyển đổi đơn vị sang triệu đồng
+                outbound_detail['plan_revenue_tr'] = outbound_detail['plan_revenue'] / 1_000_000
+                outbound_detail['revenue_tr'] = outbound_detail['revenue'] / 1_000_000
+                outbound_detail['plan_profit_tr'] = outbound_detail['plan_profit'] / 1_000_000
+                outbound_detail['gross_profit_tr'] = outbound_detail['gross_profit'] / 1_000_000
                 
-                # Tạo bảng hiển thị - chuyển đổi từ VND sang triệu đồng (tr.đ)
-                display_df = pd.DataFrame({
-                    'STT': range(1, len(detail_full) + 1),
-                    'Tuyến tour': detail_full['route'],
-                    'LK kế hoạch': detail_full['plan_customers'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LK thực hiện': detail_full['num_customers'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt KH (%)': detail_full['completion_customers'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'DT kế hoạch (Tr.đ)': (detail_full['plan_revenue'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'DT đã bán (Tr.đ)': (detail_full['revenue'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch (%)': detail_full['completion_revenue'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'LG kế hoạch (tr.đ)': (detail_full['plan_profit'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LG thực hiện (tr.đ)': (detail_full['gross_profit'] / 1_000_000).apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch (%)': detail_full['completion_profit'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                # Tạo bảng chi tiết với format số có dấu phẩy
+                detail_table = pd.DataFrame({
+                    'STT': range(1, len(outbound_detail) + 1),
+                    'Tuyến tour': outbound_detail['route'],
+                    'LK kế hoạch': outbound_detail['plan_customers'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK thực hiện': outbound_detail['num_customers'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt KH (%)': outbound_detail['completion_customers_pct'].round(1).astype(str) + '%',
+                    'DT kế hoạch (Tr.đ)': outbound_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'DT đã bán (Tr.đ)': outbound_detail['revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch (%)': outbound_detail['completion_revenue_pct'].round(1).astype(str) + '%',
+                    'LG kế hoạch (tr.đ)': outbound_detail['plan_profit_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LG thực hiện (tr.đ)': outbound_detail['gross_profit_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'tốc độ đạt kết hoạch (%)': outbound_detail['completion_profit_pct'].round(1).astype(str) + '%'
                 })
                 
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
+                detail_table['_sort_revenue'] = outbound_detail['revenue_tr'].fillna(0)
+                detail_table = detail_table.sort_values('_sort_revenue', ascending=False).reset_index(drop=True)
+                detail_table = detail_table.drop(columns=['_sort_revenue'])
+                detail_table['STT'] = range(1, len(detail_table) + 1)
+                
+                st.dataframe(detail_table, use_container_width=True, hide_index=True)
         
         # Nút refresh
         col_refresh1, col_refresh2 = st.columns([1, 5])
         with col_refresh1:
             if st.button("🔄 Làm mới dữ liệu Kế hoạch", key="refresh_plan_data"):
-                plan_tet_data = load_route_plan_data(plan_tet_url, period_name='TẾT')
-                plan_xuan_data = load_route_plan_data(plan_xuan_url, period_name='KM XUÂN')
+                plan_tet_data = load_route_plan_data(plan_tet_url, period_name='TẾT', region_filter=region_filter)
+                plan_xuan_data = load_route_plan_data(plan_xuan_url, period_name='KM XUÂN', region_filter=region_filter)
                 st.session_state[cache_key_plan_tet] = plan_tet_data
                 st.session_state[cache_key_plan_xuan] = plan_xuan_data
                 st.rerun()
@@ -1360,13 +1371,23 @@ with tab1:
             st.warning("Không có dữ liệu thực tế để so sánh.")
     
     st.markdown("---")
-    
+
     # ========== BIỂU ĐỒ THEO DÕI CHỖ BÁN (ETOUR) ==========
     st.markdown("### THEO DÕI SỐ CHỖ BÁN CỦA CÁC TUYẾN TRONG GIAI ĐOẠN - ETOUR")
     
     # Load dữ liệu etour
     etour_seats_url = st.session_state.get('etour_seats_url', DEFAULT_ETOUR_SEATS_URL)
     cache_key_etour = f'etour_seats_data_{etour_seats_url}'
+    
+    # Lấy region_filter để kiểm tra xem có thay đổi không
+    selected_region = st.session_state.get('filter_region', 'Tất cả')
+    last_region_filter_etour = st.session_state.get('last_region_filter_etour', None)
+    
+    # Nếu region filter thay đổi, clear cache để reload dữ liệu
+    if last_region_filter_etour != selected_region:
+        if cache_key_etour in st.session_state:
+            del st.session_state[cache_key_etour]
+        st.session_state['last_region_filter_etour'] = selected_region
     
     if cache_key_etour not in st.session_state:
         etour_seats_data = load_etour_seats_data(etour_seats_url)
@@ -1375,11 +1396,159 @@ with tab1:
         etour_seats_data = st.session_state[cache_key_etour]
     
     if not etour_seats_data.empty:
+        # Merge số kế hoạch từ all_plan_data (đã filter theo region) vào etour_seats_data
+        # để đảm bảo số kế hoạch đúng theo filter
+        if not all_plan_data.empty:
+            # Lấy period từ filter để chỉ lấy số kế hoạch đúng period
+            selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+            
+            # Lưu plan_revenue và plan_seats gốc từ etour
+            etour_seats_data['plan_revenue_etour'] = etour_seats_data['plan_revenue'].copy()
+            etour_seats_data['plan_seats_etour'] = etour_seats_data['plan_seats'].copy()
+            
+            # Chuẩn hóa tên route để merge
+            # Sử dụng route_group (Tuyến tour) để merge với all_plan_data, vì all_plan_data có route là Tuyến tour
+            # Nếu không có route_group, dùng route
+            merge_col = 'route_group' if 'route_group' in etour_seats_data.columns and not etour_seats_data['route_group'].isna().all() else 'route'
+            etour_seats_data['route_normalized'] = etour_seats_data[merge_col].astype(str).str.strip().str.upper()
+            
+            all_plan_data_for_merge = all_plan_data.copy()
+            all_plan_data_for_merge['route_normalized'] = all_plan_data_for_merge['route'].astype(str).str.strip().str.upper()
+            
+            # Filter theo period nếu có
+            if 'period' in all_plan_data_for_merge.columns:
+                all_plan_data_for_merge = all_plan_data_for_merge[all_plan_data_for_merge['period'] == selected_period].copy()
+            
+            # Tạo lookup table từ all_plan_data (groupby để đảm bảo mỗi route chỉ có 1 giá trị)
+            # Sum các giá trị nếu có nhiều dòng (có thể từ các nguồn khác nhau)
+            plan_lookup = all_plan_data_for_merge.groupby(['route_normalized', 'route_type']).agg({
+                'plan_customers': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
+                'plan_revenue': 'first'     # Mỗi route chỉ có 1 giá trị kế hoạch
+            }).reset_index()
+            plan_lookup = plan_lookup.rename(columns={
+                'plan_revenue': 'plan_revenue_plan',
+                'plan_customers': 'plan_customers_plan'
+            })
+            
+            # Merge plan_customers và plan_revenue từ all_plan_data
+            etour_seats_data = etour_seats_data.merge(
+                plan_lookup[['route_normalized', 'route_type', 'plan_customers_plan', 'plan_revenue_plan']],
+                on=['route_normalized', 'route_type'],
+                how='left'
+            )
+            
+            # Thay thế plan_revenue và plan_seats từ file kế hoạch nếu có
+            # plan_seats = plan_customers (LK)
+            if 'plan_customers_plan' in etour_seats_data.columns:
+                # Ưu tiên dùng số từ file kế hoạch, chỉ fallback về etour nếu không có
+                etour_seats_data['plan_seats'] = etour_seats_data['plan_customers_plan'].fillna(etour_seats_data['plan_seats_etour'])
+            if 'plan_revenue_plan' in etour_seats_data.columns:
+                # Ưu tiên dùng plan_revenue từ file kế hoạch (đã là VND và đã filter theo region)
+                # Chỉ dùng số từ etour nếu merge không match
+                etour_seats_data['plan_revenue'] = etour_seats_data['plan_revenue_plan'].fillna(etour_seats_data['plan_revenue_etour'])
+            
+            # Xóa cột tạm
+            etour_seats_data = etour_seats_data.drop(columns=[
+                'route_normalized', 'plan_revenue_etour', 'plan_seats_etour', 
+                'plan_revenue_plan', 'plan_customers_plan'
+            ], errors='ignore')
+        
+        # Lấy region_filter từ session_state để filter dữ liệu (đã lấy ở trên)
+        # selected_region đã được lấy ở trên (dòng 1383)
+        
+        # Chuẩn bị matching_regions để dùng sau
+        matching_regions = []
+        if selected_region != 'Tất cả':
+            selected_region_normalized = str(selected_region).strip().upper()
+            # Map tên region - bao gồm cả các biến thể có thể có trong CSV
+            region_mapping = {
+                'MIEN BAC': ['MIEN BAC', 'MIỀN BẮC', 'MIEN BAC', 'Mien Bac', 'MIENBAC'],
+                'MIEN TRUNG': ['MIEN TRUNG', 'MIỀN TRUNG', 'Mien Trung', 'MIENTRUNG'],
+                'MIEN NAM': ['MIEN NAM', 'MIỀN NAM', 'Mien Nam', 'MIENNAM']
+            }
+            # Tìm các giá trị region tương ứng
+            for key, values in region_mapping.items():
+                if selected_region_normalized in key or any(selected_region_normalized in v.upper() for v in values):
+                    matching_regions.extend(values)
+                    matching_regions.append(key)
+            if not matching_regions:
+                matching_regions = [selected_region_normalized]
+            
+            # Chuẩn hóa tất cả thành uppercase để so sánh
+            matching_regions = list(set([r.upper() for r in matching_regions]))
+        
+        # Filter theo region nếu có
+        filtered_etour_data = etour_seats_data.copy()
+        if selected_region != 'Tất cả' and 'region_unit' in filtered_etour_data.columns and matching_regions:
+            # Chuẩn hóa tên region để so sánh
+            filtered_etour_data['region_unit_normalized'] = filtered_etour_data['region_unit'].astype(str).str.strip().str.upper()
+            
+            # Filter theo region - CHỈ giữ các dòng có region_unit khớp
+            before_filter_count = len(filtered_etour_data)
+            filtered_etour_data = filtered_etour_data[
+                filtered_etour_data['region_unit_normalized'].isin(matching_regions)
+            ].copy()
+            after_filter_count = len(filtered_etour_data)
+            
+            # Debug: Kiểm tra xem có dòng nào từ region khác không
+            if not filtered_etour_data.empty:
+                # Kiểm tra lại để chắc chắn
+                wrong_regions = filtered_etour_data[
+                    ~filtered_etour_data['region_unit_normalized'].isin(matching_regions)
+                ]
+                if not wrong_regions.empty:
+                    # Loại bỏ các dòng sai
+                    filtered_etour_data = filtered_etour_data[
+                        filtered_etour_data['region_unit_normalized'].isin(matching_regions)
+                    ].copy()
+            
+            filtered_etour_data = filtered_etour_data.drop(columns=['region_unit_normalized'])
+        
+        # Filter theo period (Giai đoạn) nếu có
+        selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+        if selected_period != 'Tất cả' and 'period' in filtered_etour_data.columns:
+            # Chuẩn hóa tên period để so sánh
+            period_normalized = str(selected_period).strip().upper()
+            # Map các giá trị period có thể có - CHỈ lấy các giá trị tương ứng với period đã chọn
+            period_mapping = {
+                'KM XUÂN': ['KM XUÂN', 'KM XUAN'],
+                'KM XUAN': ['KM XUÂN', 'KM XUAN'],
+                'TẾT': ['TẾT', 'TET'],
+                'TET': ['TẾT', 'TET']
+            }
+            matching_periods = []
+            # Tìm period mapping tương ứng
+            for key, values in period_mapping.items():
+                if period_normalized == key.upper() or period_normalized in [v.upper() for v in values]:
+                    matching_periods.extend(values)
+                    matching_periods.append(key)
+            if not matching_periods:
+                matching_periods = [period_normalized]
+            matching_periods = list(set([p.upper() for p in matching_periods]))
+            
+            # Filter theo period - CHỈ lấy các dòng có period khớp
+            filtered_etour_data = filtered_etour_data[
+                filtered_etour_data['period'].astype(str).str.strip().str.upper().isin(matching_periods)
+            ].copy()
+        
         # Filter dữ liệu Nội địa
-        domestic_seats_data = etour_seats_data[etour_seats_data['route_type'] == 'Nội địa'].copy()
+        domestic_seats_data = filtered_etour_data[filtered_etour_data['route_type'] == 'Nội địa'].copy()
         
         # Filter dữ liệu Outbound
-        outbound_seats_data = etour_seats_data[etour_seats_data['route_type'] == 'Outbound'].copy()
+        outbound_seats_data = filtered_etour_data[filtered_etour_data['route_type'] == 'Outbound'].copy()
+        
+        # Debug: Kiểm tra số dòng sau khi filter
+        if selected_region != 'Tất cả':
+            # Đảm bảo chỉ sum các dòng có region_unit đúng
+            if not domestic_seats_data.empty and 'region_unit' in domestic_seats_data.columns:
+                # Kiểm tra lại filter
+                domestic_seats_data = domestic_seats_data[
+                    domestic_seats_data['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                ].copy()
+            if not outbound_seats_data.empty and 'region_unit' in outbound_seats_data.columns:
+                outbound_seats_data = outbound_seats_data[
+                    outbound_seats_data['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                ].copy()
         
         # Hiển thị biểu đồ Nội địa
         if not domestic_seats_data.empty:
@@ -1390,62 +1559,125 @@ with tab1:
             )
             st.plotly_chart(fig_domestic_seats, use_container_width=True, key="seats_domestic_chart")
             
-            # Nút xem chi tiết
+            # Bảng chi tiết Nội địa - ETOUR
             with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                # Tạo bảng chi tiết
-                detail_df = domestic_seats_data.copy()
+                # Tính toán các chỉ số
+                # Đảm bảo chỉ sum các dòng đã được filter theo region_unit
+                # Groupby theo route_group (Tuyến tour) để sum các dòng theo tuyến tour
+                # Nếu không có route_group, dùng route
+                groupby_col = 'route_group' if 'route_group' in domestic_seats_data.columns and not domestic_seats_data['route_group'].isna().all() else 'route'
                 
-                # Tính toán các cột cần thiết
-                # Doanh thu kế hoạch (chuyển từ VNĐ sang triệu đồng)
-                detail_df['DT_KH'] = detail_df['plan_revenue'] / 1e6
-                # Doanh thu đã bán (chuyển từ VNĐ sang triệu đồng)
-                detail_df['DT_DB'] = detail_df['actual_revenue'] / 1e6
-                # Tốc độ đạt kế hoạch DT (%)
-                detail_df['TL_DT'] = detail_df.apply(
-                    lambda x: (x['actual_revenue'] / x['plan_revenue'] * 100) if x['plan_revenue'] > 0 else 0,
-                    axis=1
-                )
-                # DT mở bán thêm: tính dựa trên giá trung bình mỗi chỗ * số chỗ còn lại
-                # Giá trung bình mỗi chỗ = actual_revenue / actual_seats (nếu actual_seats > 0)
-                detail_df['avg_price_per_seat'] = detail_df.apply(
-                    lambda x: (x['actual_revenue'] / x['actual_seats']) if x['actual_seats'] > 0 else 0,
-                    axis=1
-                )
-                detail_df['DT_MBT'] = (detail_df['avg_price_per_seat'] * detail_df['remaining_seats']) / 1e6
-                # Số chỗ Kế hoạch
-                detail_df['SC_KH'] = detail_df['plan_seats']
-                # LK đã thực hiện
-                detail_df['LK_DT'] = detail_df['actual_seats']
-                # Tốc độ đạt kế hoạch LK (%)
-                detail_df['TL_LK'] = detail_df.apply(
-                    lambda x: (x['actual_seats'] / x['plan_seats'] * 100) if x['plan_seats'] > 0 else 0,
-                    axis=1
-                )
-                # Số chỗ có thể khai thác thêm
-                detail_df['SC_KTT'] = detail_df['remaining_seats']
+                # Đảm bảo chỉ sum các dòng có region_unit đúng (nếu đã filter)
+                # domestic_seats_data đã được filter ở trên, nhưng filter lại để chắc chắn
+                if selected_region != 'Tất cả' and 'region_unit' in domestic_seats_data.columns and matching_regions:
+                    # Debug: Kiểm tra các giá trị region_unit có trong dữ liệu
+                    unique_regions = domestic_seats_data['region_unit'].astype(str).str.strip().str.upper().unique()
+                    
+                    # Filter lại để chắc chắn chỉ có các dòng từ region đã chọn
+                    # CHỈ sum các dòng có region_unit khớp với matching_regions
+                    # QUAN TRỌNG: Phải filter TRƯỚC khi groupby để tránh sum các dòng từ các region khác
+                    domestic_seats_data_filtered = domestic_seats_data[
+                        domestic_seats_data['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                    ].copy()
+                    
+                    # QUAN TRỌNG: Filter thêm theo period để đảm bảo chỉ lấy dữ liệu từ period đã chọn
+                    selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+                    if selected_period != 'Tất cả' and 'period' in domestic_seats_data_filtered.columns:
+                        period_normalized = str(selected_period).strip().upper()
+                        period_mapping = {
+                            'KM XUÂN': ['KM XUÂN', 'KM XUAN'],
+                            'KM XUAN': ['KM XUÂN', 'KM XUAN'],
+                            'TẾT': ['TẾT', 'TET'],
+                            'TET': ['TẾT', 'TET']
+                        }
+                        matching_periods = []
+                        for key, values in period_mapping.items():
+                            if period_normalized == key.upper() or period_normalized in [v.upper() for v in values]:
+                                matching_periods.extend(values)
+                                matching_periods.append(key)
+                        if not matching_periods:
+                            matching_periods = [period_normalized]
+                        matching_periods = list(set([p.upper() for p in matching_periods]))
+                        
+                        domestic_seats_data_filtered = domestic_seats_data_filtered[
+                            domestic_seats_data_filtered['period'].astype(str).str.strip().str.upper().isin(matching_periods)
+                        ].copy()
+                    
+                    # Debug: Kiểm tra xem có bao nhiêu dòng sau khi filter
+                    if not domestic_seats_data_filtered.empty:
+                        # Kiểm tra xem có dòng nào có route_group = "Miền Bắc" không
+                        if 'route_group' in domestic_seats_data_filtered.columns:
+                            mien_bac_rows = domestic_seats_data_filtered[
+                                domestic_seats_data_filtered['route_group'].astype(str).str.strip().str.upper() == 'MIỀN BẮC'
+                            ]
+                    
+                    # Debug: Kiểm tra xem có dòng nào từ region khác không
+                    if not domestic_seats_data_filtered.empty:
+                        # Đảm bảo tất cả các dòng đều có region_unit đúng
+                        wrong_region_rows = domestic_seats_data_filtered[
+                            ~domestic_seats_data_filtered['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                        ]
+                        if not wrong_region_rows.empty:
+                            # Nếu có dòng sai, loại bỏ
+                            domestic_seats_data_filtered = domestic_seats_data_filtered[
+                                domestic_seats_data_filtered['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                            ].copy()
+                else:
+                    domestic_seats_data_filtered = domestic_seats_data.copy()
                 
-                # Sắp xếp theo tổng số chỗ (actual_seats + remaining_seats) giảm dần để phù hợp với biểu đồ
-                detail_df['total_seats'] = detail_df['actual_seats'] + detail_df['remaining_seats']
-                detail_df = detail_df.sort_values('total_seats', ascending=False).reset_index(drop=True)
+                # Với plan_revenue và plan_seats: dùng 'first' vì đã merge từ all_plan_data (mỗi route_group chỉ có 1 giá trị kế hoạch)
+                # Với actual: dùng 'sum' để sum các dòng theo tuyến tour (chỉ các dòng đã filter)
+                # QUAN TRỌNG: Đã filter theo region và period rồi, nên CHỈ cần groupby theo route_group
+                # KHÔNG groupby theo region_unit và period nữa vì đã filter rồi
+                domestic_seats_detail = domestic_seats_data_filtered.groupby(groupby_col).agg({
+                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum)
+                    'actual_revenue': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
+                    'plan_seats': 'first',  # Lấy giá trị đầu tiên (không sum)
+                    'actual_seats': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
+                }).reset_index()
                 
-                # Tạo bảng hiển thị
-                display_df = pd.DataFrame({
-                    'STT': range(1, len(detail_df) + 1),
-                    'Tuyến tour': detail_df['route'],
-                    'Doanh thu kế hoạch (Tr.đ)': detail_df['DT_KH'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Doanh thu đã bán (Tr.đ)': detail_df['DT_DB'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch DT (%)': detail_df['TL_DT'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'DT mở bán thêm (Tr.đ)': detail_df['DT_MBT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Số chỗ Kế hoạch': detail_df['SC_KH'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LK đã thực hiện': detail_df['LK_DT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch LK (%)': detail_df['TL_LK'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'Số chỗ có thể khai thác thêm': detail_df['SC_KTT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                # Đổi tên cột groupby về 'route' để dùng chung
+                if groupby_col == 'route_group':
+                    domestic_seats_detail = domestic_seats_detail.rename(columns={'route_group': 'route'})
+                
+                # Chuyển đổi đơn vị sang triệu đồng
+                domestic_seats_detail['plan_revenue_tr'] = domestic_seats_detail['plan_revenue'] / 1_000_000
+                domestic_seats_detail['actual_revenue_tr'] = domestic_seats_detail['actual_revenue'] / 1_000_000
+                
+                # Tính các chỉ số
+                domestic_seats_detail['completion_revenue_pct'] = (domestic_seats_detail['actual_revenue'] / domestic_seats_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+                domestic_seats_detail['completion_seats_pct'] = (domestic_seats_detail['actual_seats'] / domestic_seats_detail['plan_seats'].replace(0, np.nan) * 100).fillna(0)
+                
+                # DT mở bán thêm = DS Dự kiến - DT đã bán (nếu > 0)
+                domestic_seats_detail['additional_revenue_tr'] = (domestic_seats_detail['plan_revenue_tr'] - domestic_seats_detail['actual_revenue_tr']).clip(lower=0)
+                
+                # Số chỗ có thể khai thác thêm = SL Dự kiến - LK đã bán
+                domestic_seats_detail['additional_seats'] = (domestic_seats_detail['plan_seats'] - domestic_seats_detail['actual_seats']).clip(lower=0)
+                
+                # Tạo bảng chi tiết với format số có dấu phẩy
+                detail_table = pd.DataFrame({
+                    'STT': range(1, len(domestic_seats_detail) + 1),
+                    'Tuyến tour': domestic_seats_detail['route'],
+                    'Doanh thu kế hoạch (Tr.đ)': domestic_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh thu đã bán (Tr.đ)': domestic_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch DT (%)': domestic_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
+                    'DT mở bán thêm (Tr.đ)': domestic_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Số chỗ Kế hoạch': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK đã thực hiện': domestic_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch LK (%)': domestic_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
+                    'Số chỗ có thể khai thác thêm': domestic_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
                 })
                 
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
+                detail_table['_sort_revenue'] = domestic_seats_detail['actual_revenue_tr'].fillna(0)
+                detail_table = detail_table.sort_values('_sort_revenue', ascending=False).reset_index(drop=True)
+                detail_table = detail_table.drop(columns=['_sort_revenue'])
+                detail_table['STT'] = range(1, len(detail_table) + 1)
+                
+                st.dataframe(detail_table, use_container_width=True, hide_index=True)
         
         st.markdown("---")
-
+        
         # Hiển thị biểu đồ Outbound
         if not outbound_seats_data.empty:
             st.markdown("#### Outbound")
@@ -1455,59 +1687,96 @@ with tab1:
             )
             st.plotly_chart(fig_outbound_seats, use_container_width=True, key="seats_outbound_chart")
             
-            # Nút xem chi tiết
+            # Bảng chi tiết Outbound - ETOUR
             with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                # Tạo bảng chi tiết
-                detail_df = outbound_seats_data.copy()
+                # Tính toán các chỉ số
+                # Đảm bảo chỉ sum các dòng đã được filter theo region_unit
+                # Groupby theo route_group (Tuyến tour) để sum các dòng theo tuyến tour
+                # Nếu không có route_group, dùng route
+                groupby_col = 'route_group' if 'route_group' in outbound_seats_data.columns and not outbound_seats_data['route_group'].isna().all() else 'route'
                 
-                # Tính toán các cột cần thiết
-                # Doanh thu kế hoạch (chuyển từ VNĐ sang triệu đồng)
-                detail_df['DT_KH'] = detail_df['plan_revenue'] / 1e6
-                # Doanh thu đã bán (chuyển từ VNĐ sang triệu đồng)
-                detail_df['DT_DB'] = detail_df['actual_revenue'] / 1e6
-                # Tốc độ đạt kế hoạch DT (%)
-                detail_df['TL_DT'] = detail_df.apply(
-                    lambda x: (x['actual_revenue'] / x['plan_revenue'] * 100) if x['plan_revenue'] > 0 else 0,
-                    axis=1
-                )
-                # DT mở bán thêm: tính dựa trên giá trung bình mỗi chỗ * số chỗ còn lại
-                # Giá trung bình mỗi chỗ = actual_revenue / actual_seats (nếu actual_seats > 0)
-                detail_df['avg_price_per_seat'] = detail_df.apply(
-                    lambda x: (x['actual_revenue'] / x['actual_seats']) if x['actual_seats'] > 0 else 0,
-                    axis=1
-                )
-                detail_df['DT_MBT'] = (detail_df['avg_price_per_seat'] * detail_df['remaining_seats']) / 1e6
-                # Số chỗ Kế hoạch
-                detail_df['SC_KH'] = detail_df['plan_seats']
-                # LK đã thực hiện
-                detail_df['LK_DT'] = detail_df['actual_seats']
-                # Tốc độ đạt kế hoạch LK (%)
-                detail_df['TL_LK'] = detail_df.apply(
-                    lambda x: (x['actual_seats'] / x['plan_seats'] * 100) if x['plan_seats'] > 0 else 0,
-                    axis=1
-                )
-                # Số chỗ có thể khai thác thêm
-                detail_df['SC_KTT'] = detail_df['remaining_seats']
+                # Đảm bảo chỉ sum các dòng có region_unit đúng (nếu đã filter)
+                if selected_region != 'Tất cả' and 'region_unit' in outbound_seats_data.columns:
+                    # Filter lại để chắc chắn
+                    outbound_seats_data_filtered = outbound_seats_data[
+                        outbound_seats_data['region_unit'].astype(str).str.strip().str.upper().isin(matching_regions)
+                    ].copy()
+                else:
+                    outbound_seats_data_filtered = outbound_seats_data.copy()
                 
-                # Sắp xếp theo tổng số chỗ (actual_seats + remaining_seats) giảm dần để phù hợp với biểu đồ
-                detail_df['total_seats'] = detail_df['actual_seats'] + detail_df['remaining_seats']
-                detail_df = detail_df.sort_values('total_seats', ascending=False).reset_index(drop=True)
+                # QUAN TRỌNG: Filter thêm theo period để đảm bảo chỉ lấy dữ liệu từ period đã chọn
+                selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+                if selected_period != 'Tất cả' and 'period' in outbound_seats_data_filtered.columns:
+                    period_normalized = str(selected_period).strip().upper()
+                    period_mapping = {
+                        'KM XUÂN': ['KM XUÂN', 'KM XUAN'],
+                        'KM XUAN': ['KM XUÂN', 'KM XUAN'],
+                        'TẾT': ['TẾT', 'TET'],
+                        'TET': ['TẾT', 'TET']
+                    }
+                    matching_periods = []
+                    for key, values in period_mapping.items():
+                        if period_normalized == key.upper() or period_normalized in [v.upper() for v in values]:
+                            matching_periods.extend(values)
+                            matching_periods.append(key)
+                    if not matching_periods:
+                        matching_periods = [period_normalized]
+                    matching_periods = list(set([p.upper() for p in matching_periods]))
+                    
+                    outbound_seats_data_filtered = outbound_seats_data_filtered[
+                        outbound_seats_data_filtered['period'].astype(str).str.strip().str.upper().isin(matching_periods)
+                    ].copy()
                 
-                # Tạo bảng hiển thị
-                display_df = pd.DataFrame({
-                    'STT': range(1, len(detail_df) + 1),
-                    'Tuyến tour': detail_df['route'],
-                    'Doanh thu kế hoạch (Tr.đ)': detail_df['DT_KH'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Doanh thu đã bán (Tr.đ)': detail_df['DT_DB'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch DT (%)': detail_df['TL_DT'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'DT mở bán thêm (Tr.đ)': detail_df['DT_MBT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Số chỗ Kế hoạch': detail_df['SC_KH'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'LK đã thực hiện': detail_df['LK_DT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0"),
-                    'Tốc độ đạt kế hoạch LK (%)': detail_df['TL_LK'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%"),
-                    'Số chỗ có thể khai thác thêm': detail_df['SC_KTT'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                # Với plan_revenue và plan_seats: dùng 'first' vì đã merge từ all_plan_data (mỗi route_group chỉ có 1 giá trị kế hoạch)
+                # Với actual: dùng 'sum' để sum các dòng theo tuyến tour (chỉ các dòng đã filter)
+                # QUAN TRỌNG: Đã filter theo region và period rồi, nên CHỈ cần groupby theo route_group
+                # KHÔNG groupby theo region_unit và period nữa vì đã filter rồi
+                outbound_seats_detail = outbound_seats_data_filtered.groupby(groupby_col).agg({
+                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum)
+                    'actual_revenue': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
+                    'plan_seats': 'first',  # Lấy giá trị đầu tiên (không sum)
+                    'actual_seats': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
+                }).reset_index()
+                
+                # Đổi tên cột groupby về 'route' để dùng chung
+                if groupby_col == 'route_group':
+                    outbound_seats_detail = outbound_seats_detail.rename(columns={'route_group': 'route'})
+                
+                # Chuyển đổi đơn vị sang triệu đồng
+                outbound_seats_detail['plan_revenue_tr'] = outbound_seats_detail['plan_revenue'] / 1_000_000
+                outbound_seats_detail['actual_revenue_tr'] = outbound_seats_detail['actual_revenue'] / 1_000_000
+                
+                # Tính các chỉ số
+                outbound_seats_detail['completion_revenue_pct'] = (outbound_seats_detail['actual_revenue'] / outbound_seats_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+                outbound_seats_detail['completion_seats_pct'] = (outbound_seats_detail['actual_seats'] / outbound_seats_detail['plan_seats'].replace(0, np.nan) * 100).fillna(0)
+                
+                # DT mở bán thêm = DS Dự kiến - DT đã bán (nếu > 0)
+                outbound_seats_detail['additional_revenue_tr'] = (outbound_seats_detail['plan_revenue_tr'] - outbound_seats_detail['actual_revenue_tr']).clip(lower=0)
+                
+                # Số chỗ có thể khai thác thêm = SL Dự kiến - LK đã bán
+                outbound_seats_detail['additional_seats'] = (outbound_seats_detail['plan_seats'] - outbound_seats_detail['actual_seats']).clip(lower=0)
+                
+                # Tạo bảng chi tiết với format số có dấu phẩy
+                detail_table = pd.DataFrame({
+                    'STT': range(1, len(outbound_seats_detail) + 1),
+                    'Tuyến tour': outbound_seats_detail['route'],
+                    'Doanh thu kế hoạch (Tr.đ)': outbound_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh thu đã bán (Tr.đ)': outbound_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch DT (%)': outbound_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
+                    'DT mở bán thêm (Tr.đ)': outbound_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Số chỗ Kế hoạch': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK đã thực hiện': outbound_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tốc độ đạt kế hoạch LK (%)': outbound_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
+                    'Số chỗ có thể khai thác thêm': outbound_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
                 })
                 
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
+                detail_table['_sort_revenue'] = outbound_seats_detail['actual_revenue_tr'].fillna(0)
+                detail_table = detail_table.sort_values('_sort_revenue', ascending=False).reset_index(drop=True)
+                detail_table = detail_table.drop(columns=['_sort_revenue'])
+                detail_table['STT'] = range(1, len(detail_table) + 1)
+                
+                st.dataframe(detail_table, use_container_width=True, hide_index=True)
         
         # Nút refresh dữ liệu
         col_refresh1, col_refresh2 = st.columns([1, 5])
@@ -1522,8 +1791,8 @@ with tab1:
             etour_seats_data = load_etour_seats_data(etour_seats_url)
             st.session_state[cache_key_etour] = etour_seats_data
             st.rerun()
-    
-    st.markdown("---")
+
+st.markdown("---")
 
 
 

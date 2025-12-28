@@ -48,11 +48,6 @@ def cached_get_top_routes(tours_df, n, metric):
 
 
 @st.cache_data(ttl=600)
-def cached_get_route_detailed_table(tours_df, plans_df, start_date, end_date):
-    return get_route_detailed_table(tours_df, plans_df, start_date, end_date)
-
-
-@st.cache_data(ttl=600)
 def cached_calculate_operational_metrics(tours_df):
     return calculate_operational_metrics(tours_df)
 
@@ -78,8 +73,6 @@ from utils import (
     load_route_performance_data, 
     load_unit_completion_data, 
     create_completion_progress_chart,
-    load_completion_progress_actual_data,
-    load_completion_progress_plan_data,
     
     # Hàm phân loại tuyến
     classify_route_type,
@@ -320,17 +313,6 @@ st.title("📊 VIETRAVEL - DASHBOARD KINH DOANH TOUR")
 # to use sheet-only data by replacing tour/plan frames with empty DataFrames so that
 # downstream charts/tables show no data. This prevents fallback generated data from appearing.
 data_meta = st.session_state.get('data_meta', {})
-used_sheet = bool(data_meta.get('used_sheet', False))
-
-# Set default values for old filters (for backward compatibility with existing code)
-date_option = "Tuần"
-vietnam_tz = pytz.timezone("Asia/Ho_Chi_Minh")
-today = datetime.now(vietnam_tz).replace(tzinfo=None)
-days_since_monday = today.weekday()
-start_date = today - timedelta(days=days_since_monday)
-start_date = datetime(start_date.year, start_date.month, start_date.day)
-end_date = start_date + timedelta(days=6)
-end_date = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59)
 
 selected_unit = "Tất cả"
 selected_units_list = tours_df['business_unit'].unique().tolist() if 'business_unit' in tours_df.columns else []
@@ -576,6 +558,22 @@ if selected_service != "Tất cả":
 # Nếu dùng Kỳ Báo cáo, không filter theo date trong tours_df (đã filter theo tháng rồi)
 # nhưng vẫn cần start_date/end_date để lấy đúng KPI plan tháng đó
 use_kybaocao = st.session_state.get('use_kybaocao', False)
+
+# Đảm bảo start_date, end_date và date_option luôn được định nghĩa
+# Nếu chưa được định nghĩa từ sidebar, sử dụng giá trị mặc định (tháng hiện tại)
+try:
+    _ = start_date
+    _ = end_date
+    _ = date_option
+except NameError:
+    # Nếu start_date, end_date hoặc date_option chưa được định nghĩa, sử dụng giá trị mặc định
+    vietnam_tz = pytz.timezone("Asia/Ho_Chi_Minh")
+    today = datetime.now(vietnam_tz).replace(tzinfo=None)
+    from calendar import monthrange
+    date_option = "Tháng"  # Giá trị mặc định
+    start_date = datetime(today.year, today.month, 1)
+    last_day = monthrange(today.year, today.month)[1]
+    end_date = datetime(today.year, today.month, last_day, 23, 59, 59)
 
 if use_kybaocao:
     # Khi dùng Kỳ Báo cáo, data đã được filter theo tháng trong cột V
@@ -1265,39 +1263,39 @@ with tab1:
     
     # 3 biểu đồ Outbound (không hiển thị Total)
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
-            if not outbound_data_for_chart.empty:
-                fig_out_cust = create_route_performance_chart(
-                    outbound_data_for_chart, 
-                    metric='num_customers', 
-                    title='Lượt Khách'
-                )
-                st.plotly_chart(fig_out_cust, use_container_width=True, key="route_out_cust")
-            else:
-                st.info("Không có dữ liệu")
-    
+        if not outbound_data_for_chart.empty:
+            fig_out_cust = create_route_performance_chart(
+                outbound_data_for_chart, 
+                metric='num_customers', 
+                title='Lượt Khách'
+            )
+            st.plotly_chart(fig_out_cust, use_container_width=True, key="route_out_cust")
+        else:
+            st.info("Không có dữ liệu")
+
     with col2:
-            if not outbound_data_for_chart.empty:
-                fig_out_rev = create_route_performance_chart(
-                    outbound_data_for_chart, 
-                    metric='revenue', 
-                    title='Doanh Thu'
-                )
-                st.plotly_chart(fig_out_rev, use_container_width=True, key="route_out_rev")
-            else:
-                st.info("Không có dữ liệu")
+        if not outbound_data_for_chart.empty:
+            fig_out_rev = create_route_performance_chart(
+                outbound_data_for_chart, 
+                metric='revenue', 
+                title='Doanh Thu'
+            )
+            st.plotly_chart(fig_out_rev, use_container_width=True, key="route_out_rev")
+        else:
+            st.info("Không có dữ liệu")
     
     with col3:
-            if not outbound_data_for_chart.empty:
-                fig_out_profit = create_route_performance_chart(
-                    outbound_data_for_chart, 
-                    metric='gross_profit', 
-                    title='Lãi Gộp'
-                )
-                st.plotly_chart(fig_out_profit, use_container_width=True, key="route_out_profit")
-            else:
-                st.info("Không có dữ liệu")
+        if not outbound_data_for_chart.empty:
+            fig_out_profit = create_route_performance_chart(
+                outbound_data_for_chart, 
+                metric='gross_profit', 
+                title='Lãi Gộp'
+            )
+            st.plotly_chart(fig_out_profit, use_container_width=True, key="route_out_profit")
+        else:
+            st.info("Không có dữ liệu")
     
     # 3 card hiển thị % hoàn thành kế hoạch cho Outbound
     # Sử dụng giá trị từ "Out Total" nếu có, nếu không thì sum tất cả
@@ -1540,74 +1538,26 @@ with tab1:
     else:
         plan_xuan_data = st.session_state[cache_key_plan_xuan]
     
-    # ===== PHẦN "TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH" =====
-    # Phần này chỉ sử dụng dữ liệu tổng (Dom Total, Out Total, Grand Total) từ Nhóm tuyến
-    # KHÔNG sử dụng dữ liệu từ Tuyến tour
-    
-    # Load dữ liệu thực tế (actual) từ Google Sheet
-    with st.spinner('Đang tải dữ liệu thực tế...'):
-        completion_actual_data = load_completion_progress_actual_data(DEFAULT_ROUTE_PERFORMANCE_URL)
-    
-    # Load dữ liệu kế hoạch (plan) từ Google Sheet
-    with st.spinner('Đang tải dữ liệu kế hoạch...'):
-        completion_plan_tet = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT')
-        completion_plan_xuan = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN')
-    
     # Gộp kế hoạch Tết và Xuân
-    if not completion_plan_tet.empty and not completion_plan_xuan.empty:
-        completion_plan_data = pd.concat([completion_plan_tet, completion_plan_xuan], ignore_index=True)
-    elif not completion_plan_tet.empty:
-        completion_plan_data = completion_plan_tet.copy()
-    elif not completion_plan_xuan.empty:
-        completion_plan_data = completion_plan_xuan.copy()
+    if not plan_tet_data.empty and not plan_xuan_data.empty:
+        all_plan_data = pd.concat([plan_tet_data, plan_xuan_data], ignore_index=True)
+    elif not plan_tet_data.empty:
+        all_plan_data = plan_tet_data.copy()
+    elif not plan_xuan_data.empty:
+        all_plan_data = plan_xuan_data.copy()
     else:
-        completion_plan_data = pd.DataFrame()
+        all_plan_data = pd.DataFrame()
     
-    # Merge actual và plan data
-    if not completion_actual_data.empty and not completion_plan_data.empty:
-        # Filter actual data theo selected_period và selected_region
-        if selected_period != 'Tất cả':
-            completion_actual_filtered = completion_actual_data[
-                completion_actual_data['period'].astype(str).str.upper() == selected_period.upper()
-            ].copy()
-        else:
-            completion_actual_filtered = completion_actual_data.copy()
+    if not all_plan_data.empty and not route_performance_data.empty:
+        # Merge kế hoạch với thực tế theo route và period
+        # Chuẩn hóa tên route để merge
+        all_plan_data['route_normalized'] = all_plan_data['route'].astype(str).str.strip().str.upper()
+        route_performance_data['route_normalized'] = route_performance_data['route'].astype(str).str.strip().str.upper()
         
-        # Filter actual data theo region_unit
-        if region_filter and region_filter != 'Tất cả':
-            # Map region_filter to region_unit values
-            region_mapping = {
-                'Mien Bac': 'Mien Bac LK',
-                'Mien Trung': 'Mien Trung LK',
-                'Mien Tay': 'Mien Tay LK',
-                'TPHCM & DNB': 'TPHCM & DNB LK'
-            }
-            target_region_unit = region_mapping.get(region_filter, region_filter + ' LK')
-            completion_actual_filtered = completion_actual_filtered[
-                completion_actual_filtered['region_unit'] == target_region_unit
-            ].copy()
-        else:
-            # Nếu "Tất cả", lấy "Total LK"
-            completion_actual_filtered = completion_actual_filtered[
-                completion_actual_filtered['region_unit'] == 'Total LK'
-            ].copy()
-        
-        # Filter plan data theo selected_period
-        if selected_period != 'Tất cả':
-            completion_plan_filtered = completion_plan_data[
-                completion_plan_data['period'].astype(str).str.upper() == selected_period.upper()
-            ].copy()
-        else:
-            completion_plan_filtered = completion_plan_data.copy()
-        
-        # Chuẩn hóa nhom_tuyen để merge
-        completion_actual_filtered['nhom_tuyen_normalized'] = completion_actual_filtered['nhom_tuyen'].astype(str).str.strip().str.upper()
-        completion_plan_filtered['nhom_tuyen_normalized'] = completion_plan_filtered['nhom_tuyen'].astype(str).str.strip().str.upper()
-        
-        # Merge actual và plan
-        merged_data = completion_actual_filtered.merge(
-            completion_plan_filtered[['nhom_tuyen_normalized', 'route_type', 'period', 'plan_customers', 'plan_revenue', 'plan_profit']],
-            on=['nhom_tuyen_normalized', 'route_type', 'period'],
+        # Merge
+        merged_data = route_performance_data.merge(
+            all_plan_data[['route_normalized', 'route_type', 'period', 'plan_customers', 'plan_revenue', 'plan_profit']],
+            on=['route_normalized', 'route_type', 'period'],
             how='left',
             suffixes=('_actual', '_plan')
         )

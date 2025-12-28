@@ -3116,9 +3116,40 @@ def load_unit_completion_data(sheet_url):
         if unit_col is None or dt_completion_col is None or lg_completion_col is None:
             return pd.DataFrame()
         
+        # Lấy tất cả các cột cần thiết
+        cols_to_keep = [unit_col]
+        if dt_plan_col:
+            cols_to_keep.append(dt_plan_col)
+        if dt_actual_col:
+            cols_to_keep.append(dt_actual_col)
+        if dt_completion_col:
+            cols_to_keep.append(dt_completion_col)
+        if lg_plan_col:
+            cols_to_keep.append(lg_plan_col)
+        if lg_actual_col:
+            cols_to_keep.append(lg_actual_col)
+        if lg_completion_col:
+            cols_to_keep.append(lg_completion_col)
+        
         # Lọc dữ liệu (bỏ dòng "Grand Total" và các dòng trống)
-        result_df = df[[unit_col, dt_completion_col, lg_completion_col]].copy()
-        result_df.columns = ['business_unit', 'revenue_completion', 'profit_completion']
+        result_df = df[cols_to_keep].copy()
+        
+        # Đặt tên cột
+        col_names = ['business_unit']
+        if dt_plan_col:
+            col_names.append('revenue_plan')
+        if dt_actual_col:
+            col_names.append('revenue_actual')
+        if dt_completion_col:
+            col_names.append('revenue_completion')
+        if lg_plan_col:
+            col_names.append('profit_plan')
+        if lg_actual_col:
+            col_names.append('profit_actual')
+        if lg_completion_col:
+            col_names.append('profit_completion')
+        
+        result_df.columns = col_names
         
         # Loại bỏ dòng trống và "Grand Total"
         result_df = result_df[
@@ -3127,7 +3158,18 @@ def load_unit_completion_data(sheet_url):
             (~result_df['business_unit'].astype(str).str.contains('Grand Total', case=False, na=False))
         ].copy()
         
-        # Xử lý phần trăm: chuyển "12%" thành 12
+        # Xử lý số liệu: parse các giá trị
+        def parse_numeric(val):
+            if pd.isna(val) or val == '':
+                return 0
+            val_str = str(val).strip()
+            # Loại bỏ dấu phẩy (nếu có trong số)
+            val_str = val_str.replace(',', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+        
         def parse_percentage(val):
             if pd.isna(val) or val == '':
                 return 0
@@ -3141,8 +3183,19 @@ def load_unit_completion_data(sheet_url):
             except:
                 return 0
         
-        result_df['revenue_completion'] = result_df['revenue_completion'].apply(parse_percentage)
-        result_df['profit_completion'] = result_df['profit_completion'].apply(parse_percentage)
+        # Parse các cột số
+        if 'revenue_plan' in result_df.columns:
+            result_df['revenue_plan'] = result_df['revenue_plan'].apply(parse_numeric)
+        if 'revenue_actual' in result_df.columns:
+            result_df['revenue_actual'] = result_df['revenue_actual'].apply(parse_numeric)
+        if 'revenue_completion' in result_df.columns:
+            result_df['revenue_completion'] = result_df['revenue_completion'].apply(parse_percentage)
+        if 'profit_plan' in result_df.columns:
+            result_df['profit_plan'] = result_df['profit_plan'].apply(parse_numeric)
+        if 'profit_actual' in result_df.columns:
+            result_df['profit_actual'] = result_df['profit_actual'].apply(parse_numeric)
+        if 'profit_completion' in result_df.columns:
+            result_df['profit_completion'] = result_df['profit_completion'].apply(parse_percentage)
         
         # Làm sạch tên đơn vị
         result_df['business_unit'] = result_df['business_unit'].astype(str).str.strip()

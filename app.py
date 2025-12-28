@@ -734,11 +734,18 @@ with tab1:
         # Filter: Chọn khu vực hoặc tất cả đơn vị
         available_regions = ["Tất cả", "Tất cả đơn vị"] + sorted(regions_data['business_unit'].unique().tolist())
         
+        # Mặc định là "Tất cả đơn vị" (index 1)
+        default_region = st.session_state.get('select_region_v1', 'Tất cả đơn vị')
+        if default_region not in available_regions:
+            default_region = 'Tất cả đơn vị'
+        default_index = available_regions.index(default_region) if default_region in available_regions else 1
+        
         col_filter1, col_filter2 = st.columns([1, 3])
         with col_filter1:
             selected_region = st.selectbox(
                 "Chọn Khu vực",
                 options=available_regions,
+                index=default_index,
                 key="select_region_v1"
             )
         
@@ -818,18 +825,64 @@ with tab1:
             # Hiển thị bảng chi tiết nếu chọn khu vực cụ thể hoặc "Tất cả đơn vị"
             if selected_region != "Tất cả" and not display_data.empty:
                 with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                    detail_df = display_data[['business_unit', 'revenue_completion', 'profit_completion']].copy()
+                    # Sắp xếp display_data TRƯỚC KHI tạo detail_df: theo Khu vực, sau đó theo DT đã bán giảm dần
+                    if 'region' in display_data.columns and 'revenue_actual' in display_data.columns:
+                        display_data = display_data.sort_values(['region', 'revenue_actual'], ascending=[True, False]).reset_index(drop=True)
+                    elif 'region' in display_data.columns:
+                        display_data = display_data.sort_values('region', ascending=True).reset_index(drop=True)
+                    elif 'revenue_actual' in display_data.columns:
+                        display_data = display_data.sort_values('revenue_actual', ascending=False).reset_index(drop=True)
+                    
+                    # Tạo bảng chi tiết với đầy đủ các cột
+                    detail_cols = ['business_unit']
                     
                     # Nếu là "Tất cả đơn vị", thêm cột khu vực
                     if selected_region == "Tất cả đơn vị":
-                        detail_df = display_data[['business_unit', 'region', 'revenue_completion', 'profit_completion']].copy()
-                        detail_df.columns = ['Đơn vị', 'Khu vực', 'Tỷ lệ đạt DT (%)', 'Tỷ lệ đạt LG (%)']
-                        detail_df = detail_df[['Khu vực', 'Đơn vị', 'Tỷ lệ đạt DT (%)', 'Tỷ lệ đạt LG (%)']]
-                    else:
-                        detail_df.columns = ['Đơn vị', 'Tỷ lệ đạt DT (%)', 'Tỷ lệ đạt LG (%)']
+                        detail_cols.append('region')
                     
-                    detail_df['Tỷ lệ đạt DT (%)'] = detail_df['Tỷ lệ đạt DT (%)'].apply(lambda x: f"{x:.1f}%")
-                    detail_df['Tỷ lệ đạt LG (%)'] = detail_df['Tỷ lệ đạt LG (%)'].apply(lambda x: f"{x:.1f}%")
+                    # Thêm các cột số liệu nếu có
+                    if 'revenue_plan' in display_data.columns:
+                        detail_cols.extend(['revenue_plan', 'revenue_actual', 'revenue_completion'])
+                    if 'profit_plan' in display_data.columns:
+                        detail_cols.extend(['profit_plan', 'profit_actual', 'profit_completion'])
+                    
+                    # Lọc các cột có sẵn
+                    available_cols = [col for col in detail_cols if col in display_data.columns]
+                    detail_df = display_data[available_cols].copy()
+                    
+                    # Đặt tên cột tiếng Việt
+                    col_mapping = {
+                        'business_unit': 'Đơn vị',
+                        'region': 'Khu vực',
+                        'revenue_plan': 'DT Kế hoạch (tr.đ)',
+                        'revenue_actual': 'DT đã bán (tr.đ)',
+                        'revenue_completion': 'Tỷ lệ đạt DT (%)',
+                        'profit_plan': 'LG Kế hoạch (tr.đ)',
+                        'profit_actual': 'LG đã bán (tr.đ)',
+                        'profit_completion': 'Tỷ lệ đạt LG (%)'
+                    }
+                    
+                    detail_df = detail_df.rename(columns=col_mapping)
+                    
+                    # Sắp xếp thứ tự cột: Khu vực (nếu có), Đơn vị, DT Kế hoạch, DT đã bán, Tỷ lệ đạt DT, LG Kế hoạch, LG đã bán, Tỷ lệ đạt LG
+                    desired_order = ['Khu vực', 'Đơn vị', 'DT Kế hoạch (tr.đ)', 'DT đã bán (tr.đ)', 'Tỷ lệ đạt DT (%)', 'LG Kế hoạch (tr.đ)', 'LG đã bán (tr.đ)', 'Tỷ lệ đạt LG (%)']
+                    available_order = [col for col in desired_order if col in detail_df.columns]
+                    detail_df = detail_df[available_order]
+                    
+                    # Format các cột số
+                    if 'DT Kế hoạch (tr.đ)' in detail_df.columns:
+                        detail_df['DT Kế hoạch (tr.đ)'] = detail_df['DT Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                    if 'DT đã bán (tr.đ)' in detail_df.columns:
+                        detail_df['DT đã bán (tr.đ)'] = detail_df['DT đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                    if 'Tỷ lệ đạt DT (%)' in detail_df.columns:
+                        detail_df['Tỷ lệ đạt DT (%)'] = detail_df['Tỷ lệ đạt DT (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                    if 'LG Kế hoạch (tr.đ)' in detail_df.columns:
+                        detail_df['LG Kế hoạch (tr.đ)'] = detail_df['LG Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                    if 'LG đã bán (tr.đ)' in detail_df.columns:
+                        detail_df['LG đã bán (tr.đ)'] = detail_df['LG đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                    if 'Tỷ lệ đạt LG (%)' in detail_df.columns:
+                        detail_df['Tỷ lệ đạt LG (%)'] = detail_df['Tỷ lệ đạt LG (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                    
                     st.dataframe(detail_df, use_container_width=True, hide_index=True)
         else:
             st.info(f"Không có dữ liệu cho khu vực '{selected_region}'")

@@ -829,19 +829,30 @@ def load_route_performance_data(sheet_url):
             return pd.DataFrame()
         
         # Tạo mask để lọc dữ liệu (trước khi tạo result_df)
-        # Loại bỏ các dòng có "Total", "Grand Total" trong route
+        # GIỮ LẠI các dòng subtotal (có "LK" trong Đơn Vị) và các dòng chi tiết
+        # Chỉ loại bỏ các dòng có "Total" hoặc "Grand Total" trong route (trừ khi là dòng subtotal hợp lệ)
         route_mask = df[route_col].astype(str).str.strip() != ''
-        route_mask = route_mask & (~df[route_col].astype(str).str.contains('Total', case=False, na=False))
         
-        # Loại bỏ các dòng có "Total" trong dom_out
-        if dom_out_col:
-            dom_out_mask = ~df[dom_out_col].astype(str).str.contains('Total', case=False, na=False)
-            route_mask = route_mask & dom_out_mask
-        
-        # Loại bỏ các dòng có "LK" trong Đơn Vị (tổng khu vực)
+        # Xác định các dòng subtotal hợp lệ (có "LK" trong Đơn Vị)
+        # Các dòng subtotal: Mien Bac LK, Mien Trung LK, Mien Tay LK, TPHCM & DNB LK, Total LK
         if unit_col:
-            unit_mask = ~df[unit_col].astype(str).str.contains('LK', case=False, na=False)
-            route_mask = route_mask & unit_mask
+            is_subtotal = df[unit_col].astype(str).str.contains('LK', case=False, na=False)
+            # Giữ lại các dòng subtotal và các dòng không có "Total" trong route
+            route_mask = route_mask & (
+                is_subtotal |  # Giữ lại các dòng subtotal
+                (~df[route_col].astype(str).str.contains('Total', case=False, na=False))  # Giữ lại các dòng không có "Total"
+            )
+        else:
+            route_mask = route_mask & (~df[route_col].astype(str).str.contains('Total', case=False, na=False))
+        
+        # Loại bỏ các dòng có "Total" trong dom_out (trừ khi là dòng subtotal)
+        if dom_out_col:
+            if unit_col:
+                is_subtotal = df[unit_col].astype(str).str.contains('LK', case=False, na=False)
+                dom_out_mask = is_subtotal | (~df[dom_out_col].astype(str).str.contains('Total', case=False, na=False))
+            else: 
+                dom_out_mask = ~df[dom_out_col].astype(str).str.contains('Total', case=False, na=False)
+            route_mask = route_mask & dom_out_mask
         
         # Áp dụng mask
         df_filtered = df[route_mask].copy()
@@ -978,10 +989,10 @@ def create_route_performance_chart(route_data, metric='revenue', title=''):
     if metric == 'revenue':
         value_col = 'revenue'
         label = 'Doanh Thu'
-        unit = 'tỷ đồng'
-        # Chuyển đổi từ VND sang tỷ đồng
+        unit = 'tr.đ'
+        # Chuyển đổi từ VND sang triệu đồng
         route_data = route_data.copy()
-        route_data['value_display'] = route_data[value_col] / 1e9
+        route_data['value_display'] = route_data[value_col] / 1e6
         color = '#636EFA'  # Xanh dương
     elif metric == 'num_customers':
         value_col = 'num_customers'
@@ -993,10 +1004,10 @@ def create_route_performance_chart(route_data, metric='revenue', title=''):
     else:  # gross_profit
         value_col = 'gross_profit'
         label = 'Lãi Gộp'
-        unit = 'tỷ đồng'
-        # Chuyển đổi từ VND sang tỷ đồng
+        unit = 'tr.đ'
+        # Chuyển đổi từ VND sang triệu đồng
         route_data = route_data.copy()
-        route_data['value_display'] = route_data[value_col] / 1e9
+        route_data['value_display'] = route_data[value_col] / 1e6
         color = '#00CC96'  # Xanh lá
     
     # Loại bỏ các dòng có route là NaN hoặc "nan"
@@ -1024,17 +1035,23 @@ def create_route_performance_chart(route_data, metric='revenue', title=''):
     # Tạo biểu đồ
     fig = go.Figure()
     
-    # Format text trên bar
+    # Format text trên bar - không có số thập phân và có dấu phẩy phân cách hàng nghìn
     if metric == 'num_customers':
-        text_values = [f"{int(v)}" for v in data['value_display']]
+        text_values = [f"{int(v):,}" for v in data['value_display']]
     else:
-        text_values = [f"{v:.1f}" for v in data['value_display']]
+        text_values = [f"{int(v):,}" for v in data['value_display']]
     
     # Lấy lists - data đã được đảo ngược (giá trị lớn nhất ở cuối)
     x_values = data['value_display'].tolist()
     y_values = data['route'].tolist()
     
     # Vẽ biểu đồ với thứ tự đã được sắp xếp (giá trị lớn nhất ở cuối list y, sẽ hiển thị ở trên)
+    # Format giá trị trong hovertemplate với dấu phẩy phân cách hàng nghìn
+    if metric == 'num_customers':
+        hover_values = [f"{int(v):,}" for v in x_values]
+    else:
+        hover_values = [f"{int(v):,}" for v in x_values]
+    
     fig.add_trace(go.Bar(
         x=x_values,
         y=y_values,
@@ -1042,7 +1059,8 @@ def create_route_performance_chart(route_data, metric='revenue', title=''):
         marker_color=color,
         text=text_values,
         textposition='outside',
-        hovertemplate='<b>%{y}</b><br>Giá trị: %{text} ' + unit + '<extra></extra>'
+        hovertemplate='<b>%{y}</b><br>Giá trị: %{customdata} ' + unit + '<extra></extra>',
+        customdata=hover_values
     ))
     
     # Cập nhật layout - dùng categoryorder='total descending' để Plotly tự động sắp xếp từ cao xuống thấp
@@ -1143,10 +1161,11 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
                 route_col = col
         
         # Nếu không tìm thấy bằng tên, dùng vị trí cột (theo CSV mẫu)
-        if nhom_tuyen_col is None and len(df.columns) > 0:
-            nhom_tuyen_col = df.columns[0]  # Cột A: Nhom tuyen
-        if route_col is None and len(df.columns) > 1:
-            route_col = df.columns[1]  # Cột B: Tuyến Tour
+        # Cấu trúc CSV: A=Khu vực Đơn Vị, B=Đơn Vị, C=Dom/Out..., D=Nhóm tuyến, E=Tuyến Tour
+        if nhom_tuyen_col is None and len(df.columns) > 3:
+            nhom_tuyen_col = df.columns[3]  # Cột D (index 3): Nhóm tuyến
+        if route_col is None and len(df.columns) > 4:
+            route_col = df.columns[4]  # Cột E (index 4): Tuyến Tour
         
         if route_col is None:
             return pd.DataFrame()
@@ -1237,6 +1256,28 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         result_df['nhom_tuyen'] = df[nhom_tuyen_col].astype(str).str.strip() if nhom_tuyen_col else ''
         result_df['route'] = df[route_col].astype(str).str.strip()
         
+        # QUAN TRỌNG: "Dom total", "Out Total", "Grand total" nằm ở cột D (Nhóm tuyến), KHÔNG PHẢI cột E (Tuyến Tour)
+        # Cột E (Tuyến Tour) của các dòng này là TRỐNG
+        # Nếu route trống hoặc không có giá trị, nhưng nhom_tuyen có "Dom total" hoặc "Out Total", 
+        # dùng nhom_tuyen làm route
+        if nhom_tuyen_col and len(result_df) > 0:
+            # Đảm bảo nhom_tuyen là Series hợp lệ
+            nhom_tuyen_series = result_df['nhom_tuyen'].fillna('').astype(str).str.strip()
+            route_series = result_df['route'].fillna('').astype(str).str.strip()
+            
+            # Tìm các dòng có nhom_tuyen chứa "Dom total", "Out Total", hoặc "Grand total"
+            mask_total = nhom_tuyen_series.str.contains('Dom total|Out Total|Grand total', case=False, na=False)
+            
+            # Nếu route trống HOẶC route không chứa "Dom total"/"Out Total"/"Grand total", 
+            # nhưng nhom_tuyen có, thì dùng nhom_tuyen làm route
+            mask_use_nhom = (
+                mask_total & 
+                ((route_series == '') | (~route_series.str.contains('Dom total|Out Total|Grand total', case=False, na=False)))
+            )
+            
+            if mask_use_nhom.any():
+                result_df.loc[mask_use_nhom, 'route'] = nhom_tuyen_series[mask_use_nhom]
+        
         # Parse số liệu
         def parse_value(val):
             if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip() == 'nan':
@@ -1280,13 +1321,36 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         else:
             result_df['plan_profit'] = 0
         
-        # Loại bỏ dòng trống, Total, Grand total
+        # Loại bỏ dòng trống, nhưng GIỮ LẠI "Dom Total" và "Out Total" để tính phần trăm
+        # Chỉ loại bỏ "Grand total" và các dòng Total khác
+        # Tìm "Dom total" và "Out Total" trong cả route và nhom_tuyen
+        has_dom_total = result_df['route'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+        has_out_total = result_df['route'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+        has_dom_total_nhom = result_df['nhom_tuyen'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+        has_out_total_nhom = result_df['nhom_tuyen'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+        
+        # Giữ lại nếu route hoặc nhom_tuyen có "Dom total" hoặc "Out Total"
+        keep_total_rows = has_dom_total | has_out_total | has_dom_total_nhom | has_out_total_nhom
+        
+        # Sau khi chuyển nhom_tuyen sang route ở trên, route sẽ chứa "Dom total" hoặc "Out Total"
+        # Nhưng cần đảm bảo route không trống (nếu route trống nhưng nhom_tuyen có "Dom total"/"Out Total", 
+        # thì route đã được set = nhom_tuyen ở trên)
+        route_str = result_df['route'].fillna('').astype(str).str.strip()
+        nhom_tuyen_str = result_df['nhom_tuyen'].fillna('').astype(str).str.strip()
+        
         result_df = result_df[
-            (result_df['route'].notna()) &
-            (result_df['route'].astype(str).str.strip() != '') &
-            (~result_df['route'].astype(str).str.contains('Total', case=False, na=False)) &
-            (~result_df['route'].astype(str).str.contains('Grand total', case=False, na=False)) &
-            (~result_df['nhom_tuyen'].astype(str).str.contains('Total', case=False, na=False))
+            # Route không trống (sau khi đã chuyển từ nhom_tuyen nếu cần)
+            (route_str != '') &
+            (
+                # Giữ lại "Dom total" và "Out Total" (từ route hoặc nhom_tuyen)
+                keep_total_rows |
+                # Loại bỏ các dòng Total khác (nhưng không phải "Dom total" và "Out Total")
+                (
+                    (~route_str.str.contains('Total', case=False, na=False)) &
+                    (~route_str.str.contains('Grand total', case=False, na=False)) &
+                    (~nhom_tuyen_str.str.contains('Total', case=False, na=False))
+                )
+            )
         ].copy()
         
         # Phân loại route_type: Nội địa vs Outbound
@@ -1313,16 +1377,18 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         result_df['route_type'] = result_df.apply(lambda row: classify_route_type(row['nhom_tuyen'], row['route']), axis=1)
         result_df['period'] = period_name
         
-        # Chỉ giữ lại các cột cần thiết
-        result_df = result_df[['route', 'route_type', 'plan_customers', 'plan_revenue', 'plan_profit', 'period']].copy()
-        
         # Nhóm theo route và route_type - lấy dòng đầu tiên (không tổng hợp)
         # Vì mỗi route trong file CSV chỉ nên có một giá trị kế hoạch duy nhất
+        # Giữ lại nhom_tuyen để có thể tìm kiếm sau này
         result_df = result_df.groupby(['route', 'route_type', 'period']).agg({
             'plan_customers': 'first',
             'plan_revenue': 'first',
-            'plan_profit': 'first'
+            'plan_profit': 'first',
+            'nhom_tuyen': 'first'  # Giữ lại nhom_tuyen
         }).reset_index()
+        
+        # Chỉ giữ lại các cột cần thiết (sau khi groupby)
+        result_df = result_df[['route', 'route_type', 'plan_customers', 'plan_revenue', 'plan_profit', 'period', 'nhom_tuyen']].copy()
         
         return result_df
         
@@ -1340,7 +1406,7 @@ def create_completion_progress_chart(completion_data, title=''):
         fig.add_annotation(text="Không có dữ liệu", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(height=400)
         return fig
-    
+
     # Sắp xếp theo completion_revenue giảm dần (từ cao xuống thấp)
     completion_data = completion_data.sort_values('completion_revenue', ascending=False).copy()
     
@@ -1567,7 +1633,7 @@ def load_etour_seats_data(sheet_url):
         # Parse số liệu
         def parse_value(val):
             if pd.isna(val) or val == '' or str(val).strip() == '-' or str(val).strip().upper() == 'NAN':
-                return 0
+                    return 0
             val_str = str(val).strip().replace(',', '').replace('"', '')
             # Xử lý số có dấu chấm làm dấu phân cách hàng nghìn (ví dụ: "6.995" = 6995, "333.460.000" = 333460000)
             # Nếu có dấu chấm và không có dấu phẩy, coi dấu chấm là dấu phân cách hàng nghìn
@@ -1588,7 +1654,7 @@ def load_etour_seats_data(sheet_url):
                 return float(val_str)
             except:
                 return 0
-        
+
         if plan_seats_col:
             result_df['plan_seats'] = df[plan_seats_col].apply(parse_value)
         else:
@@ -1673,7 +1739,7 @@ def create_seats_tracking_chart(data, title=''):
         fig.add_annotation(text="Không có dữ liệu", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         fig.update_layout(height=500)
         return fig
-    
+
     # Nhóm theo route_group để tổng hợp (nếu có nhiều route trong cùng một route_group)
     # QUAN TRỌNG: plan_revenue và plan_seats dùng 'first' vì mỗi route_group chỉ có 1 giá trị kế hoạch duy nhất
     # actual_revenue và actual_seats dùng 'sum' để sum các dòng từ cùng route_group

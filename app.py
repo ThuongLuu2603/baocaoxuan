@@ -198,7 +198,10 @@ with st.sidebar:
     
     # Bộ lọc Khu vực Đơn Vị
     if not route_performance_data.empty and 'region_unit' in route_performance_data.columns:
-        available_regions = ['Tất cả'] + sorted(route_performance_data['region_unit'].dropna().unique().tolist())
+        # Lọc bỏ các option có "LK" trong tên (Mien Bac LK, Mien Trung LK, etc.)
+        all_regions = route_performance_data['region_unit'].dropna().unique().tolist()
+        filtered_regions = [r for r in all_regions if 'LK' not in str(r).upper()]
+        available_regions = ['Tất cả'] + sorted(filtered_regions)
         selected_region = st.selectbox(
             "Khu vực Đơn Vị",
             options=available_regions,
@@ -857,8 +860,8 @@ with tab1:
             st.info("Vui lòng kiểm tra URL/Quyền truy cập của Google Sheet rồi nhấn 'Thử lại'.")
     st.markdown("---")
     
-    
-    
+
+
     # ========== BIỂU ĐỒ TỐC ĐỘ ĐẠT KẾ HOẠCH THEO TUYẾN ==========
     st.markdown("### Tốc độ đạt Kế hoạch theo Tuyến")
     
@@ -888,11 +891,54 @@ with tab1:
         selected_route = st.session_state.get('filter_route', 'Tất cả')
         
         # Áp dụng các filter từ sidebar
+        # QUAN TRỌNG: Lấy giá trị từ dòng subtotal tương ứng
+        # - Tất cả = Total LK
+        # - TPHCM & DNB = TPHCM & DNB LK
+        # - Mien Trung = Mien Trung LK
+        # - Mien Tay = Mien Tay LK
+        # - Mien Bac = Mien Bac LK
         filtered_data = route_performance_data.copy()
         # Filter theo Giai đoạn (không cần kiểm tra "Tất cả" vì đã bỏ option này)
         filtered_data = filtered_data[filtered_data['period'] == selected_period].copy()
-        if selected_region != 'Tất cả':
-            filtered_data = filtered_data[filtered_data['region_unit'] == selected_region].copy()
+        
+        # Map tên khu vực sang tên subtotal
+        region_to_subtotal = {
+            'Tất cả': 'Total LK',
+            'TPHCM & DNB': 'TPHCM & DNB LK',
+            'Mien Trung': 'Mien Trung LK',
+            'Mien Tay': 'Mien Tay LK',
+            'Mien Bac': 'Mien Bac LK'
+        }
+        
+        # Tìm dòng subtotal tương ứng
+        selected_region_normalized = str(selected_region).strip()
+        subtotal_name = region_to_subtotal.get(selected_region_normalized, None)
+        
+        if subtotal_name and ('region_unit' in filtered_data.columns or 'unit' in filtered_data.columns):
+            # Tìm dòng có region_unit hoặc unit chứa subtotal_name
+            if 'region_unit' in filtered_data.columns:
+                subtotal_rows = filtered_data[
+                    filtered_data['region_unit'].astype(str).str.contains(subtotal_name, case=False, na=False)
+                ]
+            elif 'unit' in filtered_data.columns:
+                subtotal_rows = filtered_data[
+                    filtered_data['unit'].astype(str).str.contains(subtotal_name, case=False, na=False)
+                ]
+            else:
+                subtotal_rows = pd.DataFrame()
+            
+            if not subtotal_rows.empty:
+                # Lấy giá trị từ dòng subtotal
+                filtered_data = subtotal_rows.copy()
+            else:
+                # Fallback: filter theo region_unit như cũ
+                if selected_region != 'Tất cả':
+                    filtered_data = filtered_data[filtered_data['region_unit'] == selected_region].copy()
+        else:
+            # Fallback: filter theo region_unit như cũ
+            if selected_region != 'Tất cả':
+                filtered_data = filtered_data[filtered_data['region_unit'] == selected_region].copy()
+        
         if selected_unit != 'Tất cả':
             filtered_data = filtered_data[filtered_data['unit'] == selected_unit].copy()
         if selected_route != 'Tất cả':
@@ -906,13 +952,24 @@ with tab1:
         # Filter dữ liệu Nội địa
         domestic_data = route_performance_data[route_performance_data['route_type'] == 'Nội địa'].copy()
         
-        # 3 biểu đồ Nội địa
-        col1, col2, col3 = st.columns(3)
+        # Tách dữ liệu: loại bỏ "Dom Total", "Out Total", "Grand Total" khỏi biểu đồ
+        # Nhưng vẫn giữ lại để tính phần trăm
+        domestic_data_for_chart = domestic_data[
+            ~domestic_data['route'].astype(str).str.contains('Total', case=False, na=False)
+        ].copy()
         
-        with col1:
-            if not domestic_data.empty:
+        # Lấy giá trị từ "Dom Total" nếu có (để tính phần trăm)
+        dom_total_row = domestic_data[
+            domestic_data['route'].astype(str).str.contains('Dom Total', case=False, na=False)
+        ]
+        
+        # 3 biểu đồ Nội địa (không hiển thị Total)
+        col1, col2, col3 = st.columns(3)
+
+    with col1:
+            if not domestic_data_for_chart.empty:
                 fig_dom_cust = create_route_performance_chart(
-                    domestic_data, 
+                    domestic_data_for_chart, 
                     metric='num_customers', 
                     title='Lượt Khách'
                 )
@@ -920,62 +977,241 @@ with tab1:
             else:
                 st.info("Không có dữ liệu")
         
-        with col2:
-            if not domestic_data.empty:
+    with col2:
+            if not domestic_data_for_chart.empty:
                 fig_dom_rev = create_route_performance_chart(
-                    domestic_data, 
+                    domestic_data_for_chart, 
                     metric='revenue', 
                     title='Doanh Thu'
                 )
                 st.plotly_chart(fig_dom_rev, use_container_width=True, key="route_dom_rev")
             else:
                 st.info("Không có dữ liệu")
-        
-        with col3:
-            if not domestic_data.empty:
+    
+    with col3:
+            if not domestic_data_for_chart.empty:
                 fig_dom_profit = create_route_performance_chart(
-                    domestic_data, 
+                    domestic_data_for_chart, 
                     metric='gross_profit', 
                     title='Lãi Gộp'
                 )
                 st.plotly_chart(fig_dom_profit, use_container_width=True, key="route_dom_profit")
             else:
                 st.info("Không có dữ liệu")
-        
-        # 3 card hiển thị % hoàn thành kế hoạch cho Nội địa
-        if not domestic_data.empty:
-            # Tính tổng actual và plan (nếu có plan data)
-            total_customers_actual = domestic_data['num_customers'].sum()
-            total_revenue_actual = domestic_data['revenue'].sum()
-            total_profit_actual = domestic_data['gross_profit'].sum()
+    
+    # 3 card hiển thị % hoàn thành kế hoạch cho Nội địa
+    # Sử dụng giá trị từ "Dom Total" nếu có, nếu không thì sum tất cả
+    if not domestic_data.empty:
+            # Nếu có dòng "Dom Total", dùng giá trị từ đó
+            if not dom_total_row.empty:
+                total_customers_actual = dom_total_row['num_customers'].iloc[0] if 'num_customers' in dom_total_row.columns else 0
+                total_revenue_actual = dom_total_row['revenue'].iloc[0] if 'revenue' in dom_total_row.columns else 0
+                total_profit_actual = dom_total_row['gross_profit'].iloc[0] if 'gross_profit' in dom_total_row.columns else 0
+            else:
+                # Nếu không có "Dom Total", sum tất cả các route (trừ Total)
+                total_customers_actual = domestic_data_for_chart['num_customers'].sum()
+                total_revenue_actual = domestic_data_for_chart['revenue'].sum()
+                total_profit_actual = domestic_data_for_chart['gross_profit'].sum()
             
             # Lấy plan data nếu có
             plan_tet_url = st.session_state.get('plan_tet_url', '')
             plan_xuan_url = st.session_state.get('plan_xuan_url', '')
             
+            # Lấy period filter để chỉ lấy plan data tương ứng
+            # Lấy từ sidebar_period_filter (key của selectbox) hoặc filter_period (đã được set)
+            selected_period = st.session_state.get('sidebar_period_filter') or st.session_state.get('filter_period', 'KM XUÂN')
+            
+            # Sử dụng session_state để lưu giá trị plan, tránh bị reset khi rerun
+            plan_key = f'domestic_plan_{selected_period}_{st.session_state.get("filter_region", "Tất cả")}'
+            
+            # Khởi tạo biến local
             total_customers_plan = 0
             total_revenue_plan = 0
             total_profit_plan = 0
             
-            if plan_tet_url or plan_xuan_url:
-                cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}'
-                cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}'
+            # Chỉ lấy từ session_state nếu đã có giá trị (không phải 0)
+            need_recalculate = True
+            if plan_key in st.session_state:
+                cached_plan = st.session_state[plan_key]
+                if cached_plan.get('customers', 0) > 0 or cached_plan.get('revenue', 0) > 0 or cached_plan.get('profit', 0) > 0:
+                    total_customers_plan = cached_plan.get('customers', 0)
+                    total_revenue_plan = cached_plan.get('revenue', 0)
+                    total_profit_plan = cached_plan.get('profit', 0)
+                    need_recalculate = False
+            
+            # Chỉ tính toán lại nếu chưa có giá trị trong cache
+            if need_recalculate and (plan_tet_url or plan_xuan_url):
+                # Lấy region_filter để tạo cache key đúng
+                selected_region = st.session_state.get('filter_region', 'Tất cả')
+                region_filter = selected_region if selected_region != 'Tất cả' else None
+                cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}_{region_filter}'
+                cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}_{region_filter}'
                 
-                if cache_key_plan_tet in st.session_state:
+                # Tìm dòng "Dom Total" trong plan data để lấy giá trị kế hoạch
+                # Nếu không có, sum tất cả các route Nội địa
+                # CHỈ lấy plan_tet nếu period là "TẾT" hoặc "Tất cả"
+                if (selected_period == 'TẾT' or selected_period == 'Tất cả') and cache_key_plan_tet in st.session_state:
                     plan_tet_data = st.session_state[cache_key_plan_tet]
                     if not plan_tet_data.empty:
-                        domestic_plan_tet = plan_tet_data[plan_tet_data['route_type'] == 'Nội địa']
-                        total_customers_plan += domestic_plan_tet['plan_customers'].sum()
-                        total_revenue_plan += domestic_plan_tet['plan_revenue'].sum()
-                        total_profit_plan += domestic_plan_tet['plan_profit'].sum()
+                        # Tìm dòng "Dom Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Dom total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        # Tìm dòng "Dom Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Dom total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        # KHÔNG filter theo route_type vì "Dom total" có thể không có route_type đúng
+                        if 'nhom_tuyen' in plan_tet_data.columns:
+                            dom_total_plan_tet = plan_tet_data[
+                                plan_tet_data['nhom_tuyen'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+                            ]
+                        else:
+                            # Fallback: tìm trong route nếu không có nhom_tuyen
+                            dom_total_plan_tet = plan_tet_data[
+                                plan_tet_data['route'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+                            ]
+                        if not dom_total_plan_tet.empty:
+                            # Lấy giá trị từ dòng đầu tiên
+                            # Plan Tết luôn có period = 'TẾT', không cần filter
+                            plan_customers_val = dom_total_plan_tet['plan_customers'].iloc[0] if 'plan_customers' in dom_total_plan_tet.columns else 0
+                            plan_revenue_val = dom_total_plan_tet['plan_revenue'].iloc[0] if 'plan_revenue' in dom_total_plan_tet.columns else 0
+                            plan_profit_val = dom_total_plan_tet['plan_profit'].iloc[0] if 'plan_profit' in dom_total_plan_tet.columns else 0
+                            
+                            # Convert sang float và kiểm tra NaN
+                            if not pd.isna(plan_customers_val):
+                                total_customers_plan += float(plan_customers_val)
+                            if not pd.isna(plan_revenue_val):
+                                total_revenue_plan += float(plan_revenue_val)
+                            if not pd.isna(plan_profit_val):
+                                total_profit_plan += float(plan_profit_val)
+                            
+                            # Lưu vào session_state
+                            st.session_state[plan_key] = {
+                                'customers': total_customers_plan,
+                                'revenue': total_revenue_plan,
+                                'profit': total_profit_plan
+                            }
+                            
+                            # Debug: Log giá trị đã lấy từ Plan Tết
+                            st.session_state['_debug_plan_tet'] = {
+                                'customers': float(plan_customers_val) if not pd.isna(plan_customers_val) else 0,
+                                'revenue': float(plan_revenue_val) if not pd.isna(plan_revenue_val) else 0,
+                                'profit': float(plan_profit_val) if not pd.isna(plan_profit_val) else 0
+                            }
+                        else:
+                            # Fallback: sum tất cả các route Nội địa
+                            domestic_plan_tet = plan_tet_data[plan_tet_data['route_type'] == 'Nội địa']
+                            total_customers_plan += domestic_plan_tet['plan_customers'].sum()
+                            total_revenue_plan += domestic_plan_tet['plan_revenue'].sum()
+                            total_profit_plan += domestic_plan_tet['plan_profit'].sum()
                 
-                if cache_key_plan_xuan in st.session_state:
+                # CHỈ lấy plan_xuan nếu period là "KM XUÂN" hoặc "Tất cả"
+                if (selected_period == 'KM XUÂN' or selected_period == 'Tất cả') and cache_key_plan_xuan in st.session_state:
                     plan_xuan_data = st.session_state[cache_key_plan_xuan]
                     if not plan_xuan_data.empty:
-                        domestic_plan_xuan = plan_xuan_data[plan_xuan_data['route_type'] == 'Nội địa']
-                        total_customers_plan += domestic_plan_xuan['plan_customers'].sum()
-                        total_revenue_plan += domestic_plan_xuan['plan_revenue'].sum()
-                        total_profit_plan += domestic_plan_xuan['plan_profit'].sum()
+                        # Tìm dòng "Dom Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Dom total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        # Tìm dòng "Dom Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Dom total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        # KHÔNG filter theo route_type vì "Dom total" có thể không có route_type đúng
+                        if 'nhom_tuyen' in plan_xuan_data.columns:
+                            dom_total_plan_xuan = plan_xuan_data[
+                                plan_xuan_data['nhom_tuyen'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+                            ]
+                        else:
+                            # Fallback: tìm trong route nếu không có nhom_tuyen
+                            dom_total_plan_xuan = plan_xuan_data[
+                                plan_xuan_data['route'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)
+                            ]
+                        if not dom_total_plan_xuan.empty:
+                            # Lấy giá trị từ dòng đầu tiên
+                            # Plan Xuân luôn có period = 'KM XUÂN', không cần filter
+                            plan_customers_val = dom_total_plan_xuan['plan_customers'].iloc[0] if 'plan_customers' in dom_total_plan_xuan.columns else 0
+                            plan_revenue_val = dom_total_plan_xuan['plan_revenue'].iloc[0] if 'plan_revenue' in dom_total_plan_xuan.columns else 0
+                            plan_profit_val = dom_total_plan_xuan['plan_profit'].iloc[0] if 'plan_profit' in dom_total_plan_xuan.columns else 0
+                            
+                            # Convert sang float và kiểm tra NaN
+                            if not pd.isna(plan_customers_val):
+                                total_customers_plan += float(plan_customers_val)
+                            if not pd.isna(plan_revenue_val):
+                                total_revenue_plan += float(plan_revenue_val)
+                            if not pd.isna(plan_profit_val):
+                                total_profit_plan += float(plan_profit_val)
+                            
+                            # Lưu vào session_state
+                            st.session_state[plan_key] = {
+                                'customers': total_customers_plan,
+                                'revenue': total_revenue_plan,
+                                'profit': total_profit_plan
+                            }
+                            
+                            # Debug: Log giá trị đã lấy từ Plan Xuân
+                            st.session_state['_debug_plan_xuan'] = {
+                                'customers': float(plan_customers_val) if not pd.isna(plan_customers_val) else 0,
+                                'revenue': float(plan_revenue_val) if not pd.isna(plan_revenue_val) else 0,
+                                'profit': float(plan_profit_val) if not pd.isna(plan_profit_val) else 0,
+                                'total_after_add': {
+                                    'customers': total_customers_plan,
+                                    'revenue': total_revenue_plan,
+                                    'profit': total_profit_plan
+                                }
+                            }
+                        else:
+                            # Fallback: sum tất cả các route Nội địa
+                            domestic_plan_xuan = plan_xuan_data[plan_xuan_data['route_type'] == 'Nội địa']
+                            total_customers_plan += domestic_plan_xuan['plan_customers'].sum()
+                            total_revenue_plan += domestic_plan_xuan['plan_revenue'].sum()
+                            total_profit_plan += domestic_plan_xuan['plan_profit'].sum()
+            
+            # Lấy lại giá trị từ session_state nếu có (để đảm bảo không bị reset)
+            if plan_key in st.session_state:
+                total_customers_plan = st.session_state[plan_key]['customers']
+                total_revenue_plan = st.session_state[plan_key]['revenue']
+                total_profit_plan = st.session_state[plan_key]['profit']
+            
+            # Debug: Kiểm tra giá trị
+            with st.expander("🔍 Debug - Nội địa", expanded=False):
+                st.write(f"**Selected Period:** {selected_period}")
+                st.write(f"**Actual:** LK: {total_customers_actual:,}, DT: {total_revenue_actual:,.0f} VND, LG: {total_profit_actual:,.0f} VND")
+                st.write(f"**Plan (sau khi tính):** LK: {total_customers_plan:,}, DT: {total_revenue_plan:,.0f} VND, LG: {total_profit_plan:,.0f} VND")
+                if '_debug_plan_tet' in st.session_state:
+                    st.write(f"**Debug Plan Tết (đã lấy):** {st.session_state['_debug_plan_tet']}")
+                if '_debug_plan_xuan' in st.session_state:
+                    st.write(f"**Debug Plan Xuân (đã lấy):** {st.session_state['_debug_plan_xuan']}")
+                    if 'total_after_add' in st.session_state['_debug_plan_xuan']:
+                        st.write(f"**Total sau khi cộng Plan Xuân:** {st.session_state['_debug_plan_xuan']['total_after_add']}")
+                if plan_tet_url or plan_xuan_url:
+                    if cache_key_plan_tet in st.session_state:
+                        plan_tet_data = st.session_state[cache_key_plan_tet]
+                        st.write(f"Plan Tết: {plan_tet_data.shape[0]} rows, columns: {list(plan_tet_data.columns)}")
+                        if not plan_tet_data.empty:
+                            # Tìm trong nhom_tuyen (Nhóm tuyến), không phải route (Tuyến)
+                            if 'nhom_tuyen' in plan_tet_data.columns:
+                                st.write(f"Giá trị nhom_tuyen unique (10 đầu): {plan_tet_data['nhom_tuyen'].fillna('').astype(str).unique()[:10]}")
+                                dom_total_rows = plan_tet_data[plan_tet_data['nhom_tuyen'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)]
+                                st.write(f"Tìm thấy 'Dom total' trong Plan Tết (nhom_tuyen): {len(dom_total_rows)} rows")
+                                if len(dom_total_rows) > 0:
+                                    st.write(f"Giá trị: LK={dom_total_rows['plan_customers'].iloc[0]}, DT={dom_total_rows['plan_revenue'].iloc[0]}, LG={dom_total_rows['plan_profit'].iloc[0]}")
+                            elif 'route' in plan_tet_data.columns:
+                                st.write(f"Giá trị route unique (10 đầu): {plan_tet_data['route'].fillna('').astype(str).unique()[:10]}")
+                                dom_total_rows = plan_tet_data[plan_tet_data['route'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)]
+                                st.write(f"Tìm thấy 'Dom total' trong Plan Tết (route - fallback): {len(dom_total_rows)} rows")
+                    if cache_key_plan_xuan in st.session_state:
+                        plan_xuan_data = st.session_state[cache_key_plan_xuan]
+                        st.write(f"Plan Xuân: {plan_xuan_data.shape[0]} rows, columns: {list(plan_xuan_data.columns)}")
+                        if not plan_xuan_data.empty:
+                            # Tìm trong nhom_tuyen (Nhóm tuyến), không phải route (Tuyến)
+                            if 'nhom_tuyen' in plan_xuan_data.columns:
+                                st.write(f"Giá trị nhom_tuyen unique (10 đầu): {plan_xuan_data['nhom_tuyen'].fillna('').astype(str).unique()[:10]}")
+                                dom_total_rows = plan_xuan_data[plan_xuan_data['nhom_tuyen'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)]
+                                st.write(f"Tìm thấy 'Dom total' trong Plan Xuân (nhom_tuyen): {len(dom_total_rows)} rows")
+                                if len(dom_total_rows) > 0:
+                                    st.write(f"Giá trị: LK={dom_total_rows['plan_customers'].iloc[0]}, DT={dom_total_rows['plan_revenue'].iloc[0]}, LG={dom_total_rows['plan_profit'].iloc[0]}")
+                            elif 'route' in plan_xuan_data.columns:
+                                st.write(f"Giá trị route unique (10 đầu): {plan_xuan_data['route'].fillna('').astype(str).unique()[:10]}")
+                                dom_total_rows = plan_xuan_data[plan_xuan_data['route'].astype(str).str.contains('Dom total|Dom Total', case=False, na=False)]
+                                st.write(f"Tìm thấy 'Dom total' trong Plan Xuân (route - fallback): {len(dom_total_rows)} rows")
             
             # Tính % hoàn thành
             completion_customers = (total_customers_actual / total_customers_plan * 100) if total_customers_plan > 0 else 0
@@ -1005,85 +1241,188 @@ with tab1:
                     value=f"{completion_profit:.1f}%",
                     delta=None
                 )
-        
-        st.markdown("---")
-        
-        # HÀNG 2: OUTBOUND (3 biểu đồ)
-        st.markdown("#### Outbound")
-        
-        # Filter dữ liệu Outbound
-        outbound_data = route_performance_data[route_performance_data['route_type'] == 'Outbound'].copy()
-        
-        # 3 biểu đồ Outbound
-        col1, col2, col3 = st.columns(3)
 
-        with col1:
-            if not outbound_data.empty:
+    st.markdown("---")
+    
+    # HÀNG 2: OUTBOUND (3 biểu đồ)
+    st.markdown("#### Outbound")
+    
+    # Filter dữ liệu Outbound
+    outbound_data = route_performance_data[route_performance_data['route_type'] == 'Outbound'].copy()
+    
+    # Tách dữ liệu: loại bỏ "Dom Total", "Out Total", "Grand Total" khỏi biểu đồ
+    # Nhưng vẫn giữ lại để tính phần trăm
+    outbound_data_for_chart = outbound_data[
+        ~outbound_data['route'].astype(str).str.contains('Total', case=False, na=False)
+    ].copy()
+    
+    # Lấy giá trị từ "Out Total" nếu có (để tính phần trăm)
+    out_total_row = outbound_data[
+        outbound_data['route'].astype(str).str.contains('Out Total', case=False, na=False)
+    ]
+    
+    # 3 biểu đồ Outbound (không hiển thị Total)
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+            if not outbound_data_for_chart.empty:
                 fig_out_cust = create_route_performance_chart(
-                    outbound_data, 
+                    outbound_data_for_chart, 
                     metric='num_customers', 
                     title='Lượt Khách'
                 )
                 st.plotly_chart(fig_out_cust, use_container_width=True, key="route_out_cust")
             else:
                 st.info("Không có dữ liệu")
-
-        with col2:
-            if not outbound_data.empty:
+    
+    with col2:
+            if not outbound_data_for_chart.empty:
                 fig_out_rev = create_route_performance_chart(
-                    outbound_data, 
+                    outbound_data_for_chart, 
                     metric='revenue', 
                     title='Doanh Thu'
                 )
                 st.plotly_chart(fig_out_rev, use_container_width=True, key="route_out_rev")
             else:
                 st.info("Không có dữ liệu")
-        
-        with col3:
-            if not outbound_data.empty:
+    
+    with col3:
+            if not outbound_data_for_chart.empty:
                 fig_out_profit = create_route_performance_chart(
-                    outbound_data, 
+                    outbound_data_for_chart, 
                     metric='gross_profit', 
                     title='Lãi Gộp'
                 )
                 st.plotly_chart(fig_out_profit, use_container_width=True, key="route_out_profit")
             else:
                 st.info("Không có dữ liệu")
-        
-        # 3 card hiển thị % hoàn thành kế hoạch cho Outbound
-        if not outbound_data.empty:
-            # Tính tổng actual và plan (nếu có plan data)
-            total_customers_actual = outbound_data['num_customers'].sum()
-            total_revenue_actual = outbound_data['revenue'].sum()
-            total_profit_actual = outbound_data['gross_profit'].sum()
+    
+    # 3 card hiển thị % hoàn thành kế hoạch cho Outbound
+    # Sử dụng giá trị từ "Out Total" nếu có, nếu không thì sum tất cả
+    if not outbound_data.empty:
+            # Nếu có dòng "Out Total", dùng giá trị từ đó
+            if not out_total_row.empty:
+                total_customers_actual = out_total_row['num_customers'].iloc[0] if 'num_customers' in out_total_row.columns else 0
+                total_revenue_actual = out_total_row['revenue'].iloc[0] if 'revenue' in out_total_row.columns else 0
+                total_profit_actual = out_total_row['gross_profit'].iloc[0] if 'gross_profit' in out_total_row.columns else 0
+            else:
+                # Nếu không có "Out Total", sum tất cả các route (trừ Total)
+                total_customers_actual = outbound_data_for_chart['num_customers'].sum()
+                total_revenue_actual = outbound_data_for_chart['revenue'].sum()
+                total_profit_actual = outbound_data_for_chart['gross_profit'].sum()
             
             # Lấy plan data nếu có
             plan_tet_url = st.session_state.get('plan_tet_url', '')
             plan_xuan_url = st.session_state.get('plan_xuan_url', '')
             
+            # Lấy period filter
+            selected_period = st.session_state.get('sidebar_period_filter') or st.session_state.get('filter_period', 'KM XUÂN')
+            
+            # Sử dụng session_state để lưu giá trị plan cho Outbound
+            plan_key_outbound = f'outbound_plan_{selected_period}_{st.session_state.get("filter_region", "Tất cả")}'
+            
+            # Khởi tạo biến local
             total_customers_plan = 0
             total_revenue_plan = 0
             total_profit_plan = 0
             
-            if plan_tet_url or plan_xuan_url:
-                cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}'
-                cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}'
+            # Chỉ lấy từ session_state nếu đã có giá trị (không phải 0)
+            need_recalculate_outbound = True
+            if plan_key_outbound in st.session_state:
+                cached_plan = st.session_state[plan_key_outbound]
+                if cached_plan.get('customers', 0) > 0 or cached_plan.get('revenue', 0) > 0 or cached_plan.get('profit', 0) > 0:
+                    total_customers_plan = cached_plan.get('customers', 0)
+                    total_revenue_plan = cached_plan.get('revenue', 0)
+                    total_profit_plan = cached_plan.get('profit', 0)
+                    need_recalculate_outbound = False
+            
+            # Chỉ tính toán lại nếu chưa có giá trị trong cache
+            if need_recalculate_outbound and (plan_tet_url or plan_xuan_url):
+                # Lấy region_filter để tạo cache key đúng
+                selected_region = st.session_state.get('filter_region', 'Tất cả')
+                region_filter = selected_region if selected_region != 'Tất cả' else None
+                cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}_{region_filter}'
+                cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}_{region_filter}'
                 
-                if cache_key_plan_tet in st.session_state:
+                # Tìm dòng "Out Total" trong plan data để lấy giá trị kế hoạch
+                # Nếu không có, sum tất cả các route Outbound
+                # CHỈ lấy plan_tet nếu period là "TẾT" hoặc "Tất cả"
+                if (selected_period == 'TẾT' or selected_period == 'Tất cả') and cache_key_plan_tet in st.session_state:
                     plan_tet_data = st.session_state[cache_key_plan_tet]
                     if not plan_tet_data.empty:
-                        outbound_plan_tet = plan_tet_data[plan_tet_data['route_type'] == 'Outbound']
-                        total_customers_plan += outbound_plan_tet['plan_customers'].sum()
-                        total_revenue_plan += outbound_plan_tet['plan_revenue'].sum()
-                        total_profit_plan += outbound_plan_tet['plan_profit'].sum()
+                        # Tìm dòng "Out Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Out Total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        if 'nhom_tuyen' in plan_tet_data.columns:
+                            out_total_plan_tet = plan_tet_data[
+                                plan_tet_data['nhom_tuyen'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+                            ]
+                        else:
+                            # Fallback: tìm trong route nếu không có nhom_tuyen
+                            out_total_plan_tet = plan_tet_data[
+                                plan_tet_data['route'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+                            ]
+                        if not out_total_plan_tet.empty:
+                            plan_customers_val = out_total_plan_tet['plan_customers'].iloc[0] if 'plan_customers' in out_total_plan_tet.columns else 0
+                            plan_revenue_val = out_total_plan_tet['plan_revenue'].iloc[0] if 'plan_revenue' in out_total_plan_tet.columns else 0
+                            plan_profit_val = out_total_plan_tet['plan_profit'].iloc[0] if 'plan_profit' in out_total_plan_tet.columns else 0
+                            
+                            # Convert sang float và kiểm tra NaN
+                            if not pd.isna(plan_customers_val):
+                                total_customers_plan += float(plan_customers_val)
+                            if not pd.isna(plan_revenue_val):
+                                total_revenue_plan += float(plan_revenue_val)
+                            if not pd.isna(plan_profit_val):
+                                total_profit_plan += float(plan_profit_val)
+                        else:
+                            # Fallback: sum tất cả các route Outbound
+                            outbound_plan_tet = plan_tet_data[plan_tet_data['route_type'] == 'Outbound']
+                            total_customers_plan += outbound_plan_tet['plan_customers'].sum()
+                            total_revenue_plan += outbound_plan_tet['plan_revenue'].sum()
+                            total_profit_plan += outbound_plan_tet['plan_profit'].sum()
                 
-                if cache_key_plan_xuan in st.session_state:
+                # CHỈ lấy plan_xuan nếu period là "KM XUÂN" hoặc "Tất cả"
+                if (selected_period == 'KM XUÂN' or selected_period == 'Tất cả') and cache_key_plan_xuan in st.session_state:
                     plan_xuan_data = st.session_state[cache_key_plan_xuan]
                     if not plan_xuan_data.empty:
-                        outbound_plan_xuan = plan_xuan_data[plan_xuan_data['route_type'] == 'Outbound']
-                        total_customers_plan += outbound_plan_xuan['plan_customers'].sum()
-                        total_revenue_plan += outbound_plan_xuan['plan_revenue'].sum()
-                        total_profit_plan += outbound_plan_xuan['plan_profit'].sum()
+                        # Tìm dòng "Out Total" trong plan data (nếu có)
+                        # QUAN TRỌNG: "Out Total" nằm ở cột A (nhom_tuyen - Nhóm tuyến), KHÔNG PHẢI cột B (route - Tuyến)
+                        # Tìm trong cột nhom_tuyen, không tìm trong route
+                        if 'nhom_tuyen' in plan_xuan_data.columns:
+                            out_total_plan_xuan = plan_xuan_data[
+                                plan_xuan_data['nhom_tuyen'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+                            ]
+                        else:
+                            # Fallback: tìm trong route nếu không có nhom_tuyen
+                            out_total_plan_xuan = plan_xuan_data[
+                                plan_xuan_data['route'].astype(str).str.contains('Out Total|Out total', case=False, na=False)
+                            ]
+                        if not out_total_plan_xuan.empty:
+                            plan_customers_val = out_total_plan_xuan['plan_customers'].iloc[0] if 'plan_customers' in out_total_plan_xuan.columns else 0
+                            plan_revenue_val = out_total_plan_xuan['plan_revenue'].iloc[0] if 'plan_revenue' in out_total_plan_xuan.columns else 0
+                            plan_profit_val = out_total_plan_xuan['plan_profit'].iloc[0] if 'plan_profit' in out_total_plan_xuan.columns else 0
+                            
+                            # Convert sang float và kiểm tra NaN
+                            if not pd.isna(plan_customers_val):
+                                total_customers_plan += float(plan_customers_val)
+                            if not pd.isna(plan_revenue_val):
+                                total_revenue_plan += float(plan_revenue_val)
+                            if not pd.isna(plan_profit_val):
+                                total_profit_plan += float(plan_profit_val)
+                        else:
+                            # Fallback: sum tất cả các route Outbound
+                            outbound_plan_xuan = plan_xuan_data[plan_xuan_data['route_type'] == 'Outbound']
+                            total_customers_plan += outbound_plan_xuan['plan_customers'].sum()
+                            total_revenue_plan += outbound_plan_xuan['plan_revenue'].sum()
+                            total_profit_plan += outbound_plan_xuan['plan_profit'].sum()
+                
+                # Lưu giá trị vào session_state sau khi tính toán
+                if need_recalculate_outbound:
+                    st.session_state[plan_key_outbound] = {
+                        'customers': total_customers_plan,
+                        'revenue': total_revenue_plan,
+                        'profit': total_profit_plan
+                    }
             
             # Tính % hoàn thành
             completion_customers = (total_customers_actual / total_customers_plan * 100) if total_customers_plan > 0 else 0
@@ -1113,23 +1452,51 @@ with tab1:
                     value=f"{completion_profit:.1f}%",
                     delta=None
                 )
-        
-        # Nút refresh dữ liệu
-        col_refresh1, col_refresh2 = st.columns([1, 5])
-        with col_refresh1:
+    
+    # Nút refresh dữ liệu
+    col_refresh1, col_refresh2 = st.columns([1, 5])
+    with col_refresh1:
             if st.button("🔄 Làm mới dữ liệu", key="refresh_route_performance"):
                 route_performance_data = load_route_performance_data(route_performance_url)
                 st.session_state[cache_key_route] = route_performance_data
+                # Clear plan data cache để reload với code mới
+                selected_region = st.session_state.get('filter_region', 'Tất cả')
+                region_filter = selected_region if selected_region != 'Tất cả' else None
+                plan_tet_url = st.session_state.get('plan_tet_url', '')
+                plan_xuan_url = st.session_state.get('plan_xuan_url', '')
+                cache_key_plan_tet = f'plan_tet_data_{plan_tet_url}_{region_filter}'
+                cache_key_plan_xuan = f'plan_xuan_data_{plan_xuan_url}_{region_filter}'
+                if cache_key_plan_tet in st.session_state:
+                    del st.session_state[cache_key_plan_tet]
+                if cache_key_plan_xuan in st.session_state:
+                    del st.session_state[cache_key_plan_xuan]
+                
+                # Clear giá trị plan đã lưu trong session_state
+                selected_period = st.session_state.get('sidebar_period_filter') or st.session_state.get('filter_period', 'KM XUÂN')
+                plan_key_domestic = f'domestic_plan_{selected_period}_{selected_region}'
+                plan_key_outbound = f'outbound_plan_{selected_period}_{selected_region}'
+                if plan_key_domestic in st.session_state:
+                    del st.session_state[plan_key_domestic]
+                if plan_key_outbound in st.session_state:
+                    del st.session_state[plan_key_outbound]
+                
+                # Clear debug values
+                if '_debug_plan_tet' in st.session_state:
+                    del st.session_state['_debug_plan_tet']
+                if '_debug_plan_xuan' in st.session_state:
+                    del st.session_state['_debug_plan_xuan']
+                
                 st.rerun()
-    else:
+    
+    if route_performance_data.empty:
         st.warning("Không thể tải dữ liệu từ Google Sheet. Vui lòng kiểm tra URL và quyền truy cập.")
         if st.button("🔄 Thử lại", key="retry_route_performance"):
             route_performance_data = load_route_performance_data(route_performance_url)
             st.session_state[cache_key_route] = route_performance_data
             st.rerun()
-    
+
     st.markdown("---")
-    
+
     # ========== BẢNG TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH ==========
     st.markdown("### TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH")
     
@@ -1247,6 +1614,11 @@ with tab1:
                     'gross_profit': 'sum'
                 }).reset_index()
                 
+                # Loại bỏ các dòng "Grand Total" và "Dom Total"
+                domestic_detail = domestic_detail[
+                    ~domestic_detail['route'].astype(str).str.contains('Grand Total|Dom Total', case=False, na=False)
+                ].copy()
+                
                 # Tính lại phần trăm hoàn thành
                 domestic_detail['completion_customers_pct'] = (domestic_detail['num_customers'] / domestic_detail['plan_customers'].replace(0, np.nan) * 100).fillna(0)
                 domestic_detail['completion_revenue_pct'] = (domestic_detail['revenue'] / domestic_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
@@ -1320,6 +1692,11 @@ with tab1:
                     'plan_profit': 'first',
                     'gross_profit': 'sum'
                 }).reset_index()
+                
+                # Loại bỏ các dòng "Grand Total", "Out Total", và các dòng có "Total" trong tên
+                outbound_detail = outbound_detail[
+                    ~outbound_detail['route'].astype(str).str.contains('Total', case=False, na=False)
+                ].copy()
                 
                 # Tính lại phần trăm hoàn thành
                 outbound_detail['completion_customers_pct'] = (outbound_detail['num_customers'] / outbound_detail['plan_customers'].replace(0, np.nan) * 100).fillna(0)

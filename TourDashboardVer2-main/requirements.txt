@@ -1,0 +1,9 @@
+streamlit==1.50.0
+pandas==2.3.3
+numpy==2.3.4
+plotly==6.3.1
+faker==37.11.0
+pytz
+openpyxl==3.1.2
+xlrd==2.0.1
+requests==2.32.3

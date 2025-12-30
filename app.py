@@ -86,7 +86,10 @@ from utils import (
     
     # Hàm đọc dữ liệu cho phần Tiến độ hoàn thành kế hoạch
     load_completion_progress_actual_data,
-    load_completion_progress_plan_data
+    load_completion_progress_plan_data,
+    
+    # Hàm đọc tổng kế hoạch từ sheet
+    load_total_plan_data
 )
 
 # Page configuration
@@ -107,6 +110,12 @@ st.markdown("""
     h1 {
         padding-top: 0rem;
         margin-top: 0rem;
+    }
+    h2 {
+        font-size: 1.2rem !important;
+    }
+    h3 {
+        font-size: 1.1rem !important;
     }
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
@@ -308,8 +317,29 @@ if not used_sheet and sheet_url_provided:
     # Inform user that sheet was not available
     st.sidebar.warning("Google Sheet chưa được đọc thành công — Một số biểu đồ có thể không hiển thị dữ liệu.")
 
-# Dashboard Title
-st.title("📊 VIETRAVEL - DASHBOARD KINH DOANH TOUR")
+# Dashboard Title - căn giữa
+st.markdown("""
+    <div style="text-align: center; margin-bottom: 5px; margin-top: 10px;">
+        <h1 style="font-size: 1.6rem; margin-bottom: 2px; line-height: 1.2;">📊 VIETRAVEL - DASHBOARD THEO DÕI KINH DOANH</h1>
+""", unsafe_allow_html=True)
+
+# Hiển thị thông tin giai đoạn như header
+selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+period_normalized = str(selected_period).strip().upper()
+if period_normalized in ['KM XUÂN', 'KM XUAN', 'XUÂN', 'XUAN']:
+    period_info = "Kế hoạch giai đoạn Xuân (1/12 - 28/02/2026)"
+elif period_normalized in ['TẾT', 'TET']:
+    period_info = "Kế hoạch giai đoạn Tết (14/02 - 22/02/2026)"
+else:
+    period_info = ""
+
+if period_info:
+    st.markdown(f"""
+        <h2 style='color: #1f77b4; margin-top: 0; text-align: center; font-size: 1.2rem; line-height: 1.2;'>{period_info}</h2>
+        </div>
+    """, unsafe_allow_html=True)
+else:
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # Filter data based on selections (dimensional filters only, NOT date)
 # Date filtering will be done inside calculate_kpis to preserve YoY data
@@ -697,6 +727,64 @@ with tab1:
     else:
         all_plan_data = pd.DataFrame()
     
+    # Load tổng kế hoạch từ sheet (Dom Total và Out Total) theo giai đoạn đã chọn
+    # Lấy giai đoạn từ filter
+    selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+    
+    # Chỉ load và dùng số kế hoạch từ sheet tương ứng với giai đoạn đã chọn
+    total_plan_dom_lk = 0
+    total_plan_dom_dt = 0
+    total_plan_out_lk = 0
+    total_plan_out_dt = 0
+    
+    # Chuẩn hóa tên giai đoạn
+    period_normalized = str(selected_period).strip().upper()
+    is_tet = period_normalized in ['TẾT', 'TET']
+    is_xuan = period_normalized in ['KM XUÂN', 'KM XUAN', 'XUÂN', 'XUAN']
+    
+    if is_tet:
+        # Chỉ lấy từ sheet Tết
+        cache_key_total_plan_tet = f'total_plan_tet_{plan_tet_url}'
+        if cache_key_total_plan_tet not in st.session_state:
+            with st.spinner('Đang tải tổng kế hoạch Tết...'):
+                total_plan_tet = load_total_plan_data(plan_tet_url, period_name='TẾT')
+                st.session_state[cache_key_total_plan_tet] = total_plan_tet
+        else:
+            total_plan_tet = st.session_state[cache_key_total_plan_tet]
+        
+        total_plan_dom_lk = total_plan_tet.get('dom_lk', 0)
+        total_plan_dom_dt = total_plan_tet.get('dom_dt', 0)  # Đơn vị: tr.d
+        total_plan_out_lk = total_plan_tet.get('out_lk', 0)
+        total_plan_out_dt = total_plan_tet.get('out_dt', 0)  # Đơn vị: tr.d
+    elif is_xuan:
+        # Chỉ lấy từ sheet Xuân
+        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}'
+        if cache_key_total_plan_xuan not in st.session_state:
+            with st.spinner('Đang tải tổng kế hoạch Xuân...'):
+                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN')
+                st.session_state[cache_key_total_plan_xuan] = total_plan_xuan
+        else:
+            total_plan_xuan = st.session_state[cache_key_total_plan_xuan]
+        
+        total_plan_dom_lk = total_plan_xuan.get('dom_lk', 0)
+        total_plan_dom_dt = total_plan_xuan.get('dom_dt', 0)  # Đơn vị: tr.d
+        total_plan_out_lk = total_plan_xuan.get('out_lk', 0)
+        total_plan_out_dt = total_plan_xuan.get('out_dt', 0)  # Đơn vị: tr.d
+    else:
+        # Mặc định là Xuân nếu không xác định được
+        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}'
+        if cache_key_total_plan_xuan not in st.session_state:
+            with st.spinner('Đang tải tổng kế hoạch Xuân...'):
+                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN')
+                st.session_state[cache_key_total_plan_xuan] = total_plan_xuan
+        else:
+            total_plan_xuan = st.session_state[cache_key_total_plan_xuan]
+        
+        total_plan_dom_lk = total_plan_xuan.get('dom_lk', 0)
+        total_plan_dom_dt = total_plan_xuan.get('dom_dt', 0)  # Đơn vị: tr.d
+        total_plan_out_lk = total_plan_xuan.get('out_lk', 0)
+        total_plan_out_dt = total_plan_xuan.get('out_dt', 0)  # Đơn vị: tr.d
+    
     # ========== BIỂU ĐỒ THEO DÕI CHỖ BÁN (ETOUR) ==========
     st.markdown("### THEO DÕI SỐ CHỖ BÁN CỦA CÁC TUYẾN TRONG GIAI ĐOẠN - ETOUR")
     
@@ -791,15 +879,17 @@ with tab1:
                     # Có thể log ra để debug nhưng không hiển thị cho user
                     pass
             
-            # Xóa cột tạm (GIỮ LẠI plan_revenue_etour để dùng cho "Doanh số dự kiến")
+            # Xóa cột tạm (GIỮ LẠI plan_revenue_etour và plan_seats_etour để dùng cho tính tổng % đạt kế hoạch)
             etour_seats_data = etour_seats_data.drop(columns=[
-                'route_normalized', 'plan_seats_etour', 
+                'route_normalized', 
                 'plan_revenue_plan', 'plan_customers_plan'
             ], errors='ignore')
         else:
-            # Nếu không có all_plan_data, vẫn cần tạo plan_revenue_etour từ giá trị gốc
+            # Nếu không có all_plan_data, vẫn cần tạo plan_revenue_etour và plan_seats_etour từ giá trị gốc
             if 'plan_revenue_etour' not in etour_seats_data.columns:
                 etour_seats_data['plan_revenue_etour'] = etour_seats_data['plan_revenue'].copy()
+            if 'plan_seats_etour' not in etour_seats_data.columns:
+                etour_seats_data['plan_seats_etour'] = etour_seats_data['plan_seats'].copy()
         
         # Lấy region_filter từ session_state để filter dữ liệu (đã lấy ở trên)
         # selected_region đã được lấy ở trên
@@ -905,6 +995,68 @@ with tab1:
             # Đảm bảo công thức nhất quán với bảng chi tiết
             domestic_seats_data = domestic_seats_data.copy()
             domestic_seats_data['remaining_seats'] = (domestic_seats_data['plan_seats'] - domestic_seats_data['actual_seats']).clip(lower=0)
+            
+            # Tính tổng % đạt kế hoạch
+            # QUAN TRỌNG: Dùng số kế hoạch TỔNG từ sheet "Kế hoạch xuân" và "Kế hoạch tết" (Dom Total)
+            # Chuyển đổi từ tr.d sang VNĐ: total_plan_dom_dt * 1_000_000
+            total_plan_revenue = total_plan_dom_dt * 1_000_000  # Đơn vị: VNĐ
+            total_plan_seats = total_plan_dom_lk  # Đơn vị: LK
+            
+            total_actual_revenue = domestic_seats_data['actual_revenue'].sum()  # Đơn vị: VNĐ
+            total_actual_seats = domestic_seats_data['actual_seats'].sum()  # Đơn vị: LK
+            
+            completion_revenue_pct = (total_actual_revenue / total_plan_revenue * 100) if total_plan_revenue > 0 else 0
+            completion_seats_pct = (total_actual_seats / total_plan_seats * 100) if total_plan_seats > 0 else 0
+            
+            # Hiển thị 2 card metrics với thông tin chi tiết
+            col1, col2 = st.columns([1, 1], gap="small")
+            with col1:
+                # Format số với dấu phẩy
+                total_plan_revenue_tr = total_plan_revenue / 1_000_000
+                total_actual_revenue_tr = total_actual_revenue / 1_000_000
+                st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
+                                padding: 16px 20px; 
+                                border-radius: 8px; 
+                                border: none;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                margin-right: 5px;">
+                        <div style="text-align: center; font-size: 12px; color: #6c757d; margin-bottom: 12px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch Doanh Thu Đạt
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 12px; color: #495057; line-height: 1.6;">
+                                <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_revenue_tr:,.0f} tr.d</span></div>
+                                <div>TH: <span style="font-weight: 600;">{total_actual_revenue_tr:,.0f} tr.d</span></div>
+                            </div>
+                            <div style="font-size: 32px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                                {completion_revenue_pct:.1f}%
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
+                                padding: 12px 16px; 
+                                border-radius: 8px; 
+                                border: none;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                margin-left: 5px;">
+                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch LK đạt
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                                <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_seats:,.0f} LK</span></div>
+                                <div>TH: <span style="font-weight: 600;">{total_actual_seats:,.0f} LK</span></div>
+                            </div>
+                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                                {completion_seats_pct:.1f}%
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
             
             fig_domestic_seats = create_seats_tracking_chart(
                 domestic_seats_data,
@@ -1051,6 +1203,68 @@ with tab1:
             outbound_seats_data = outbound_seats_data.copy()
             outbound_seats_data['remaining_seats'] = (outbound_seats_data['plan_seats'] - outbound_seats_data['actual_seats']).clip(lower=0)
             
+            # Tính tổng % đạt kế hoạch
+            # QUAN TRỌNG: Dùng số kế hoạch TỔNG từ sheet "Kế hoạch xuân" và "Kế hoạch tết" (Out Total)
+            # Chuyển đổi từ tr.d sang VNĐ: total_plan_out_dt * 1_000_000
+            total_plan_revenue = total_plan_out_dt * 1_000_000  # Đơn vị: VNĐ
+            total_plan_seats = total_plan_out_lk  # Đơn vị: LK
+            
+            total_actual_revenue = outbound_seats_data['actual_revenue'].sum()  # Đơn vị: VNĐ
+            total_actual_seats = outbound_seats_data['actual_seats'].sum()  # Đơn vị: LK
+            
+            completion_revenue_pct = (total_actual_revenue / total_plan_revenue * 100) if total_plan_revenue > 0 else 0
+            completion_seats_pct = (total_actual_seats / total_plan_seats * 100) if total_plan_seats > 0 else 0
+            
+            # Hiển thị 2 card metrics với thông tin chi tiết
+            col1, col2 = st.columns([1, 1], gap="small")
+            with col1:
+                # Format số với dấu phẩy
+                total_plan_revenue_tr = total_plan_revenue / 1_000_000
+                total_actual_revenue_tr = total_actual_revenue / 1_000_000
+                st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
+                                padding: 12px 16px; 
+                                border-radius: 8px; 
+                                border: none;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                margin-right: 5px;">
+                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch Doanh Thu Đạt
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                                <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_revenue_tr:,.0f} tr.d</span></div>
+                                <div>TH: <span style="font-weight: 600;">{total_actual_revenue_tr:,.0f} tr.d</span></div>
+                            </div>
+                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                                {completion_revenue_pct:.1f}%
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
+                                padding: 12px 16px; 
+                                border-radius: 8px; 
+                                border: none;
+                                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                                margin-left: 5px;">
+                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch LK đạt
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                                <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_seats:,.0f} LK</span></div>
+                                <div>TH: <span style="font-weight: 600;">{total_actual_seats:,.0f} LK</span></div>
+                            </div>
+                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                                {completion_seats_pct:.1f}%
+                            </div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+            
             fig_outbound_seats = create_seats_tracking_chart(
                 outbound_seats_data,
                 title='Theo dõi số chỗ bán của các tuyến trong giai đoạn - etour (Outbound)'
@@ -1177,7 +1391,7 @@ with tab1:
     st.markdown("---")
     
     # ========== VÙNG 1: TỐC ĐỘ ĐẠT KẾ HOẠCH ==========
-    st.markdown("### Vùng 1: Tốc độ đạt Kế hoạch")
+    st.markdown("### TỐC ĐỘ ĐẠT KẾ HOẠCH (DATANET)")
     
     # Lấy dữ liệu từ Google Sheet mới (Kết quả Kinh doanh)
     # Sử dụng URL từ session_state hoặc default
@@ -1396,7 +1610,7 @@ with tab1:
 
 
     # ========== BIỂU ĐỒ TỐC ĐỘ ĐẠT KẾ HOẠCH THEO TUYẾN ==========
-    st.markdown("### Tốc độ đạt Kế hoạch theo Tuyến")
+    st.markdown("### TỐC ĐỘ ĐẠT KẾ HOẠCH TUYẾN (DATANET)")
     
     # Lấy dữ liệu từ Google Sheet mới
     route_performance_url = st.session_state.get('route_performance_url', DEFAULT_ROUTE_PERFORMANCE_URL)
@@ -1879,7 +2093,7 @@ with tab1:
     st.markdown("---")
 
     # ========== BẢNG TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH ==========
-    st.markdown("### TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH")
+    st.markdown("### TIẾN ĐỘ HOÀN THÀNH KẾ HOẠCH (DATANET)")
     
     # Dữ liệu kế hoạch đã được load ở trên (all_plan_data)
     

@@ -1686,6 +1686,152 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         return pd.DataFrame()
 
 
+def load_total_plan_data(sheet_url, period_name='TẾT'):
+    """
+    Đọc tổng kế hoạch từ Google Sheet (Dom Total và Out Total)
+    Sheet URL Tết: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=1651160424#gid=1651160424
+    Sheet URL Xuân: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=212301737#gid=212301737
+    
+    Cấu trúc CSV:
+    - Dòng 5 (index 4): Header: Nhom tuyen, Tuyến Tour, LK, DT (tr.d), LG (tr.d)...
+    - Dòng 17: "Dom Total" - tổng Nội địa (cột C: LK, cột D: DT)
+    - Dòng 39: "Out Total" - tổng Outbound (cột C: LK, cột D: DT)
+    
+    Args:
+        sheet_url: URL của Google Sheet
+        period_name: Tên giai đoạn ('TẾT' hoặc 'KM XUÂN')
+    
+    Returns: Dictionary với keys: 'dom_lk', 'dom_dt', 'out_lk', 'out_dt' (đơn vị: LK và tr.d)
+    """
+    import requests
+    import io
+    import re
+    
+    try:
+        # Chuyển đổi URL thành CSV export URL
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+        if not sheet_id_match:
+            return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
+        
+        sheet_id = sheet_id_match.group(1)
+        gid_match = re.search(r"[?&#]gid=(\d+)", sheet_url)
+        gid = gid_match.group(1) if gid_match else None
+        
+        if not gid:
+            return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
+        
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        
+        # Tải CSV
+        resp = requests.get(csv_url, timeout=15)
+        resp.raise_for_status()
+        
+        # Đọc CSV
+        text = resp.content.decode('utf-8', errors='replace')
+        lines = [line.rstrip('\r') for line in text.split('\n')]
+        
+        # Tìm dòng header (dòng 5, index 4)
+        header_idx = None
+        for i, line in enumerate(lines[:10]):
+            line_upper = line.upper()
+            if 'NHOM TUYEN' in line_upper or 'NHOM TUYẾN' in line_upper:
+                if 'TUYẾN TOUR' in line_upper or 'TUYEN TOUR' in line_upper:
+                    header_idx = i
+                    break
+        
+        if header_idx is None:
+            header_idx = 4 if len(lines) > 4 else 0
+        
+        # Đọc từ dòng header
+        df = pd.read_csv(io.StringIO('\n'.join(lines[header_idx:])), skipinitialspace=True)
+        
+        if df.empty:
+            return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
+        
+        # Tìm cột Nhóm tuyến (cột A) và Tuyến Tour (cột B)
+        nhom_tuyen_col = None
+        route_col = None
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if 'NHOM TUYEN' in col_upper or 'NHOM TUYẾN' in col_upper:
+                nhom_tuyen_col = col
+            elif 'TUYẾN TOUR' in col_upper or 'TUYEN TOUR' in col_upper:
+                route_col = col
+        
+        if nhom_tuyen_col is None and len(df.columns) > 0:
+            nhom_tuyen_col = df.columns[0]  # Cột A
+        if route_col is None and len(df.columns) > 1:
+            route_col = df.columns[1]  # Cột B
+        
+        # Cột C: LK (index 2), Cột D: DT (tr.d) (index 3)
+        lk_col = df.columns[2] if len(df.columns) > 2 else None
+        dt_col = df.columns[3] if len(df.columns) > 3 else None
+        
+        if not lk_col or not dt_col:
+            return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
+        
+        # Parse số liệu
+        def parse_value(val):
+            if pd.isna(val) or val == '' or val is None:
+                return 0
+            val_str = str(val).strip().replace(',', '').replace(' ', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+        
+        # Tìm dòng "Dom Total" và "Out Total"
+        # Ưu tiên tìm trong cột B (Tuyến Tour) vì "Dom Total" và "Out Total" thường nằm ở đó
+        dom_lk = 0
+        dom_dt = 0
+        out_lk = 0
+        out_dt = 0
+        
+        for idx, row in df.iterrows():
+            # Kiểm tra trong cột Tuyến Tour (cột B) trước - ưu tiên cao hơn
+            route = ''
+            if route_col:
+                route = str(row[route_col]).strip().upper() if pd.notna(row[route_col]) else ''
+            
+            # Kiểm tra trong cột Nhóm tuyến (cột A)
+            nhom_tuyen = ''
+            if nhom_tuyen_col:
+                nhom_tuyen = str(row[nhom_tuyen_col]).strip().upper() if pd.notna(row[nhom_tuyen_col]) else ''
+            
+            # Tìm "Dom Total" - ưu tiên cột B (Tuyến Tour)
+            is_dom_total = False
+            if route and ('DOM TOTAL' in route or 'DOMTOTAL' in route):
+                is_dom_total = True
+            elif nhom_tuyen and ('DOM TOTAL' in nhom_tuyen or 'DOMTOTAL' in nhom_tuyen):
+                is_dom_total = True
+            
+            if is_dom_total and dom_lk == 0 and dom_dt == 0:
+                dom_lk = parse_value(row[lk_col])
+                dom_dt = parse_value(row[dt_col])
+                continue  # Đã tìm thấy, không cần kiểm tra Out Total nữa
+            
+            # Tìm "Out Total" - ưu tiên cột B (Tuyến Tour)
+            is_out_total = False
+            if route and ('OUT TOTAL' in route or 'OUTTOTAL' in route):
+                is_out_total = True
+            elif nhom_tuyen and ('OUT TOTAL' in nhom_tuyen or 'OUTTOTAL' in nhom_tuyen):
+                is_out_total = True
+            
+            if is_out_total and out_lk == 0 and out_dt == 0:
+                out_lk = parse_value(row[lk_col])
+                out_dt = parse_value(row[dt_col])
+        
+        return {
+            'dom_lk': dom_lk,
+            'dom_dt': dom_dt,  # Đơn vị: tr.d (triệu đồng)
+            'out_lk': out_lk,
+            'out_dt': out_dt   # Đơn vị: tr.d (triệu đồng)
+        }
+        
+    except Exception as e:
+        return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
+
+
 def create_completion_progress_chart(completion_data, title=''):
     """
     Tạo biểu đồ bar chart hiển thị tiến độ hoàn thành kế hoạch
@@ -2056,8 +2202,12 @@ def create_seats_tracking_chart(data, title=''):
     # Đảm bảo công thức nhất quán với bảng chi tiết
     grouped_data['remaining_seats'] = (grouped_data['plan_seats'] - grouped_data['actual_seats']).clip(lower=0)
     
-    # Sắp xếp theo actual_revenue giảm dần (giá trị lớn nhất ở bên trái)
-    grouped_data = grouped_data.sort_values('actual_revenue', ascending=False).head(15).copy()
+    # Tính phần trăm đạt kế hoạch
+    grouped_data['completion_seats_pct'] = (grouped_data['actual_seats'] / grouped_data['plan_seats'].replace(0, np.nan) * 100).fillna(0)
+    grouped_data['completion_revenue_pct'] = (grouped_data['actual_revenue'] / grouped_data['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
+    
+    # Sắp xếp theo plan_seats (Lượt khách kế hoạch) giảm dần (giá trị lớn nhất ở bên trái)
+    grouped_data = grouped_data.sort_values('plan_seats', ascending=False).head(15).copy()
     grouped_data = grouped_data.reset_index(drop=True)
     
     x_axis = grouped_data['route_group'].tolist()
@@ -2116,6 +2266,38 @@ def create_seats_tracking_chart(data, title=''):
         ),
         secondary_y=True
     )
+    
+    # Thêm annotation hiển thị % đạt kế hoạch LK trên đỉnh của stacked bar (bên trái)
+    for i, route in enumerate(x_axis):
+        total_seats = grouped_data.iloc[i]['plan_seats']
+        completion_pct = grouped_data.iloc[i]['completion_seats_pct']
+        if total_seats > 0 and not pd.isna(completion_pct):
+            fig.add_annotation(
+                x=route,
+                y=total_seats,
+                text=f"LK: <b>{completion_pct:.1f}%</b>",
+                showarrow=False,
+                font=dict(size=14, color='#dc3545', family='Arial Black'),  # Màu đỏ cho LK
+                yshift=15,
+                xshift=-25,  # Đẩy sang trái để tách khỏi DT
+                yref='y'
+            )
+    
+    # Thêm annotation hiển thị % đạt kế hoạch DT trên các marker của line chart (bên phải)
+    for i, route in enumerate(x_axis):
+        actual_revenue_tr = grouped_data.iloc[i]['actual_revenue'] / 1_000_000
+        completion_pct = grouped_data.iloc[i]['completion_revenue_pct']
+        if actual_revenue_tr > 0 and not pd.isna(completion_pct):
+            fig.add_annotation(
+                x=route,
+                y=actual_revenue_tr,
+                text=f"DT: <b>{completion_pct:.1f}%</b>",
+                showarrow=False,
+                font=dict(size=14, color='#FFD700', family='Arial Black'),  # Màu vàng cho DT
+                yshift=20,
+                xshift=25,  # Đẩy sang phải để tách khỏi LK
+                yref='y2'
+            )
     
     # Cập nhật layout
     fig.update_layout(

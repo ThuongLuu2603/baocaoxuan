@@ -1870,9 +1870,25 @@ with tab1:
         total_revenue_plan = cached_plan.get('revenue', 0)
         total_profit_plan = cached_plan.get('profit', 0)
     else:
-        # Load plan data từ Plan Tết và Plan Xuân
+        # Map tên khu vực từ filter để truyền vào load_completion_progress_plan_data
+        region_filter_for_plan = None
+        if selected_region != 'Tất cả':
+            # Map tên khu vực từ filter sang tên dùng trong load_completion_progress_plan_data
+            region_mapping = {
+                'Mien Bac': 'Mien Bac',
+                'Miền Bắc': 'Mien Bac',
+                'Mien Trung': 'Mien Trung',
+                'Miền Trung': 'Mien Trung',
+                'TPHCM & DNB': 'TPHCM & DNB',
+                'Mien Tay': 'Mien Tay',
+                'Miền Tây': 'Mien Tay',
+            }
+            selected_region_normalized = str(selected_region).strip()
+            region_filter_for_plan = region_mapping.get(selected_region_normalized, selected_region_normalized)
+        
+        # Load plan data từ Plan Tết và Plan Xuân (với region_filter nếu có)
         if selected_period == 'TẾT' or selected_period == 'Tất cả':
-            plan_tet_data = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT')
+            plan_tet_data = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT', region_filter=region_filter_for_plan)
             if not plan_tet_data.empty:
                 dom_total_plan_tet = plan_tet_data[
                     plan_tet_data['nhom_tuyen'].astype(str).str.contains('Dom Total', case=False, na=False)
@@ -1884,7 +1900,7 @@ with tab1:
                     total_profit_plan += dom_total_plan_tet['plan_profit'].iloc[0] if 'plan_profit' in dom_total_plan_tet.columns else 0
         
         if selected_period == 'KM XUÂN' or selected_period == 'Tất cả':
-            plan_xuan_data = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN')
+            plan_xuan_data = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN', region_filter=region_filter_for_plan)
             if not plan_xuan_data.empty:
                 dom_total_plan_xuan = plan_xuan_data[
                     plan_xuan_data['nhom_tuyen'].astype(str).str.contains('Dom Total', case=False, na=False)
@@ -2043,9 +2059,25 @@ with tab1:
         total_revenue_plan_outbound = cached_plan.get('revenue', 0)
         total_profit_plan_outbound = cached_plan.get('profit', 0)
     else:
-        # Load plan data từ Plan Tết và Plan Xuân
+        # Map tên khu vực từ filter để truyền vào load_completion_progress_plan_data
+        region_filter_for_plan = None
+        if selected_region != 'Tất cả':
+            # Map tên khu vực từ filter sang tên dùng trong load_completion_progress_plan_data
+            region_mapping = {
+                'Mien Bac': 'Mien Bac',
+                'Miền Bắc': 'Mien Bac',
+                'Mien Trung': 'Mien Trung',
+                'Miền Trung': 'Mien Trung',
+                'TPHCM & DNB': 'TPHCM & DNB',
+                'Mien Tay': 'Mien Tay',
+                'Miền Tây': 'Mien Tay',
+            }
+            selected_region_normalized = str(selected_region).strip()
+            region_filter_for_plan = region_mapping.get(selected_region_normalized, selected_region_normalized)
+        
+        # Load plan data từ Plan Tết và Plan Xuân (với region_filter nếu có)
         if selected_period == 'TẾT' or selected_period == 'Tất cả':
-            plan_tet_data = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT')
+            plan_tet_data = load_completion_progress_plan_data(plan_tet_url, period_name='TẾT', region_filter=region_filter_for_plan)
             if not plan_tet_data.empty:
                 out_total_plan_tet = plan_tet_data[
                     plan_tet_data['nhom_tuyen'].astype(str).str.contains('Out Total', case=False, na=False)
@@ -2057,7 +2089,7 @@ with tab1:
                     total_profit_plan_outbound += out_total_plan_tet['plan_profit'].iloc[0] if 'plan_profit' in out_total_plan_tet.columns else 0
         
         if selected_period == 'KM XUÂN' or selected_period == 'Tất cả':
-            plan_xuan_data = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN')
+            plan_xuan_data = load_completion_progress_plan_data(plan_xuan_url, period_name='KM XUÂN', region_filter=region_filter_for_plan)
             if not plan_xuan_data.empty:
                 out_total_plan_xuan = plan_xuan_data[
                     plan_xuan_data['nhom_tuyen'].astype(str).str.contains('Out Total', case=False, na=False)

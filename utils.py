@@ -2019,8 +2019,8 @@ def load_etour_seats_data(sheet_url):
 def create_seats_tracking_chart(data, title=''):
     """
     Tạo biểu đồ kết hợp bar và line chart để theo dõi số chỗ bán
-    - Stacked bar: "Đã thực hiện" (actual_seats) và "Số chỗ có thể khai thác thêm" (remaining_seats) - trục Y trái (LK)
-    - Line chart: "DT Kế hoạch" (plan_revenue) và "DT đã thực hiện" (actual_revenue) - trục Y phải (Tr đồng)
+    - Stacked bar: "LK Đã thực hiện" (actual_seats) và "LK kế hoạch còn" (remaining_seats) - trục Y trái (LK)
+    - Line chart: "DT Kế hoạch" (plan_revenue) và "DS đã thực hiện" (actual_revenue) - trục Y phải (Tr đồng)
     
     data: DataFrame với columns: route, route_group, plan_seats, actual_seats, remaining_seats, plan_revenue, actual_revenue
     """
@@ -2033,12 +2033,12 @@ def create_seats_tracking_chart(data, title=''):
     # Nhóm theo route_group để tổng hợp (nếu có nhiều route trong cùng một route_group)
     # QUAN TRỌNG: plan_revenue và plan_seats dùng 'first' vì mỗi route_group chỉ có 1 giá trị kế hoạch duy nhất
     # actual_revenue và actual_seats dùng 'sum' để sum các dòng từ cùng route_group
+    # remaining_seats KHÔNG sum, mà tính lại sau khi groupby: remaining_seats = plan_seats - actual_seats
     if 'route_group' in data.columns and not data['route_group'].isna().all():
         # Sử dụng route_group làm x-axis nếu có
         grouped_data = data.groupby('route_group').agg({
             'plan_seats': 'first',  # Mỗi route_group chỉ có 1 giá trị kế hoạch
             'actual_seats': 'sum',  # Sum các dòng từ cùng route_group
-            'remaining_seats': 'sum',  # Sum các dòng từ cùng route_group
             'plan_revenue': 'first',  # Mỗi route_group chỉ có 1 giá trị kế hoạch
             'actual_revenue': 'sum'  # Sum các dòng từ cùng route_group
         }).reset_index()
@@ -2047,11 +2047,14 @@ def create_seats_tracking_chart(data, title=''):
         grouped_data = data.groupby('route').agg({
             'plan_seats': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
             'actual_seats': 'sum',  # Sum các dòng từ cùng route
-            'remaining_seats': 'sum',  # Sum các dòng từ cùng route
             'plan_revenue': 'first',  # Mỗi route chỉ có 1 giá trị kế hoạch
             'actual_revenue': 'sum'  # Sum các dòng từ cùng route
         }).reset_index()
         grouped_data['route_group'] = grouped_data['route']
+    
+    # QUAN TRỌNG: Tính lại remaining_seats sau khi groupby theo công thức: số kế hoạch - đã thực hiện
+    # Đảm bảo công thức nhất quán với bảng chi tiết
+    grouped_data['remaining_seats'] = (grouped_data['plan_seats'] - grouped_data['actual_seats']).clip(lower=0)
     
     # Sắp xếp theo actual_revenue giảm dần (giá trị lớn nhất ở bên trái)
     grouped_data = grouped_data.sort_values('actual_revenue', ascending=False).head(15).copy()
@@ -2067,9 +2070,9 @@ def create_seats_tracking_chart(data, title=''):
         go.Bar(
             x=x_axis,
             y=grouped_data['actual_seats'].values,
-            name='Đã thực hiện',
+            name='LK Đã thực hiện',
             marker_color='#1f77b4',  # Xanh dương
-            hovertemplate='<b>%{x}</b><br>Đã thực hiện: %{y:,.0f} LK<extra></extra>'
+            hovertemplate='<b>%{x}</b><br>LK Đã thực hiện: %{y:,.0f} LK<extra></extra>'
         ),
         secondary_y=False
     )
@@ -2079,9 +2082,9 @@ def create_seats_tracking_chart(data, title=''):
         go.Bar(
             x=x_axis,
             y=grouped_data['remaining_seats'].values,
-            name='Số chỗ có thể khai thác thêm',
+            name='LK kế hoạch còn lại',
             marker_color='#ff7f0e',  # Cam
-            hovertemplate='<b>%{x}</b><br>Số chỗ có thể khai thác thêm: %{y:,.0f} LK<extra></extra>'
+            hovertemplate='<b>%{x}</b><br>LK kế hoạch còn lại: %{y:,.0f} LK<extra></extra>'
         ),
         secondary_y=False
     )
@@ -2105,11 +2108,11 @@ def create_seats_tracking_chart(data, title=''):
         go.Scatter(
             x=x_axis,
             y=(grouped_data['actual_revenue'].values / 1_000_000),  # Chuyển từ VND sang triệu đồng
-            name='DT đã thực hiện',
+            name='DS đã thực hiện',
             mode='lines+markers',
             line=dict(color='#FFD700', width=2),  # Vàng
             marker=dict(size=8, color='#FFD700'),
-            hovertemplate='<b>%{x}</b><br>DT đã thực hiện: %{y:,.0f} Tr đồng<extra></extra>'
+            hovertemplate='<b>%{x}</b><br>DS đã thực hiện: %{y:,.0f} Tr đồng<extra></extra>'
         ),
         secondary_y=True
     )

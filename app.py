@@ -71,7 +71,8 @@ from utils import (
     # CHỨC NĂNG MỚI CHO DASHBOARD
     load_route_plan_data, 
     load_route_performance_data, 
-    load_unit_completion_data, 
+    load_unit_completion_data,
+    load_unit_completion_data_tet, 
     create_completion_progress_chart,
     
     # Hàm phân loại tuyến
@@ -1447,201 +1448,205 @@ with tab1:
     st.markdown("---")
     
     # ========== VÙNG 1: TỐC ĐỘ ĐẠT KẾ HOẠCH ==========
-    st.markdown("### TỐC ĐỘ ĐẠT KẾ HOẠCH (DATANET)")
+    # Lấy giai đoạn từ filter
+    selected_period = st.session_state.get('filter_period', 'KM XUÂN')
+    period_normalized = str(selected_period).strip().upper()
+    is_tet = period_normalized in ['TẾT', 'TET']
     
-    # Lấy dữ liệu từ Google Sheet mới (Kết quả Kinh doanh)
-    # Sử dụng URL từ session_state hoặc default
-    unit_completion_url = st.session_state.get('unit_completion_url', DEFAULT_UNIT_COMPLETION_URL)
-    
-    # Cache để tránh load lại mỗi lần rerun
-    cache_key = f'unit_completion_data_{unit_completion_url}'
-    if cache_key not in st.session_state:
-        with st.spinner('Đang tải dữ liệu mức độ hoàn thành kế hoạch đơn vị...'):
-            unit_completion_data = load_unit_completion_data(unit_completion_url)
-            st.session_state[cache_key] = unit_completion_data
-    else:
-        unit_completion_data = st.session_state[cache_key]
-    
-    # Nếu không có dữ liệu, thử load lại
-    if unit_completion_data.empty:
-        with st.spinner('Đang tải lại dữ liệu...'):
-            unit_completion_data = load_unit_completion_data(unit_completion_url)
-            st.session_state[cache_key] = unit_completion_data
-    
-    if not unit_completion_data.empty:
-        # Tách dữ liệu khu vực và đơn vị
-        regions_data = unit_completion_data[unit_completion_data['is_region'] == True].copy()
-        units_data = unit_completion_data[unit_completion_data['is_region'] == False].copy()
+    # Ẩn biểu đồ này khi giai đoạn là TẾT
+    if not is_tet:
+        st.markdown("### TỐC ĐỘ ĐẠT KẾ HOẠCH (DATANET)")
         
-        # Filter: Chọn khu vực hoặc tất cả đơn vị
-        available_regions = ["Tất cả", "Tất cả đơn vị"] + sorted(regions_data['business_unit'].unique().tolist())
-        
-        # Mặc định là "Tất cả đơn vị" (index 1)
-        default_region = st.session_state.get('select_region_v1', 'Tất cả đơn vị')
-        if default_region not in available_regions:
-            default_region = 'Tất cả đơn vị'
-        default_index = available_regions.index(default_region) if default_region in available_regions else 1
-        
-        col_filter1, col_filter2 = st.columns([1, 3])
-        with col_filter1:
-            selected_region = st.selectbox(
-                "Chọn Khu vực",
-                options=available_regions,
-                index=default_index,
-                key="select_region_v1"
-            )
-        
-        # Lọc dữ liệu theo lựa chọn
-        if selected_region == "Tất cả":
-            # Hiển thị tất cả khu vực
-            display_data = regions_data.copy()
-            chart_title = "Mức độ hoàn thành của các Khu vực"
-        elif selected_region == "Tất cả đơn vị":
-            # Hiển thị tất cả đơn vị từ tất cả khu vực
-            display_data = units_data.copy()
-            chart_title = "Mức độ hoàn thành của tất cả Đơn vị"
+        # Khi giai đoạn là KM XUÂN, dùng sheet mặc định
+        unit_completion_url = st.session_state.get('unit_completion_url', DEFAULT_UNIT_COMPLETION_URL)
+        cache_key = f'unit_completion_data_{unit_completion_url}'
+        if cache_key not in st.session_state:
+            with st.spinner('Đang tải dữ liệu mức độ hoàn thành kế hoạch đơn vị...'):
+                unit_completion_data = load_unit_completion_data(unit_completion_url)
+                st.session_state[cache_key] = unit_completion_data
         else:
-            # Hiển thị các đơn vị trong khu vực được chọn
-            display_data = units_data[units_data['region'] == selected_region].copy()
-            chart_title = f"Mức độ hoàn thành của các đơn vị - {selected_region}"
+            unit_completion_data = st.session_state[cache_key]
         
-        if not display_data.empty:
-            # Sắp xếp theo revenue_completion để hiển thị
-            display_data = display_data.sort_values('revenue_completion', ascending=False).reset_index(drop=True)
+        # Nếu không có dữ liệu, thử load lại
+        if unit_completion_data.empty:
+            with st.spinner('Đang tải lại dữ liệu...'):
+                unit_completion_data = load_unit_completion_data(unit_completion_url)
+                st.session_state[cache_key] = unit_completion_data
+        
+        if not unit_completion_data.empty:
+            # Tách dữ liệu khu vực và đơn vị
+            regions_data = unit_completion_data[unit_completion_data['is_region'] == True].copy()
+            units_data = unit_completion_data[unit_completion_data['is_region'] == False].copy()
             
-            # Tạo biểu đồ cột nhóm: Doanh Thu và Lãi Gộp
-            fig = go.Figure()
+            # Filter: Chọn khu vực hoặc tất cả đơn vị
+            available_regions = ["Tất cả", "Tất cả đơn vị"] + sorted(regions_data['business_unit'].unique().tolist())
             
-            # Cột Doanh Thu (DT) - màu xanh
-            fig.add_trace(go.Bar(
-                name='DT',
-                x=display_data['business_unit'],
-                y=display_data['revenue_completion'],
-                text=[f"{v:.0f}%" for v in display_data['revenue_completion']],
-                textposition='outside',
-                marker_color='#636EFA',  # Màu xanh
-                hovertemplate='<b>%{x}</b><br>DT: %{y:.1f}%<extra></extra>'
-            ))
+            # Mặc định là "Tất cả đơn vị" (index 1)
+            default_region = st.session_state.get('select_region_v1', 'Tất cả đơn vị')
+            if default_region not in available_regions:
+                default_region = 'Tất cả đơn vị'
+            default_index = available_regions.index(default_region) if default_region in available_regions else 1
             
-            # Cột Lãi Gộp (LG) - màu cam
-            fig.add_trace(go.Bar(
-                name='LG',
-                x=display_data['business_unit'],
-                y=display_data['profit_completion'],
-                text=[f"{v:.0f}%" for v in display_data['profit_completion']],
-                textposition='outside',
-                marker_color='#FFA15A',  # Màu cam
-                hovertemplate='<b>%{x}</b><br>LG: %{y:.1f}%<extra></extra>'
-            ))
+            col_filter1, col_filter2 = st.columns([1, 3])
+            with col_filter1:
+                selected_region = st.selectbox(
+                    "Chọn Khu vực",
+                    options=available_regions,
+                    index=default_index,
+                    key="select_region_v1"
+                )
             
-            # Thêm đường mục tiêu 100%
-            fig.add_hline(
-                y=100, 
-                line_dash="dash", 
-                line_color="gray", 
-                annotation_text="Mức mục tiêu",
-                annotation_position="right"
-            )
+            # Lọc dữ liệu theo lựa chọn
+            if selected_region == "Tất cả":
+                # Hiển thị tất cả khu vực
+                display_data = regions_data.copy()
+                chart_title = "Mức độ hoàn thành của các Khu vực"
+            elif selected_region == "Tất cả đơn vị":
+                # Hiển thị tất cả đơn vị từ tất cả khu vực
+                display_data = units_data.copy()
+                chart_title = "Mức độ hoàn thành của tất cả Đơn vị"
+            else:
+                # Hiển thị các đơn vị trong khu vực được chọn
+                display_data = units_data[units_data['region'] == selected_region].copy()
+                chart_title = f"Mức độ hoàn thành của các đơn vị - {selected_region}"
             
-            # Cập nhật layout
-            fig.update_layout(
-                title=chart_title,
-                xaxis_title="",
-                yaxis_title="Mức độ hoàn thành (%)",
-                barmode='group',
-                height=450,
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                ),
-                margin=dict(l=30, r=30, t=60, b=100),
-                xaxis=dict(tickangle=-45, tickfont=dict(size=10))
-            )
+            if not display_data.empty:
+                # Sắp xếp theo revenue_completion để hiển thị
+                display_data = display_data.sort_values('revenue_completion', ascending=False).reset_index(drop=True)
+                
+                # Tạo biểu đồ cột nhóm: Doanh Thu và Lãi Gộp
+                fig = go.Figure()
+                
+                # Cột Doanh Thu (DT) - màu xanh
+                fig.add_trace(go.Bar(
+                    name='DT',
+                    x=display_data['business_unit'],
+                    y=display_data['revenue_completion'],
+                    text=[f"{v:.0f}%" for v in display_data['revenue_completion']],
+                    textposition='outside',
+                    marker_color='#636EFA',  # Màu xanh
+                    hovertemplate='<b>%{x}</b><br>DT: %{y:.1f}%<extra></extra>'
+                ))
+                
+                # Cột Lãi Gộp (LG) - màu cam
+                fig.add_trace(go.Bar(
+                    name='LG',
+                    x=display_data['business_unit'],
+                    y=display_data['profit_completion'],
+                    text=[f"{v:.0f}%" for v in display_data['profit_completion']],
+                    textposition='outside',
+                    marker_color='#FFA15A',  # Màu cam
+                    hovertemplate='<b>%{x}</b><br>LG: %{y:.1f}%<extra></extra>'
+                ))
+                
+                # Thêm đường mục tiêu 100%
+                fig.add_hline(
+                    y=100, 
+                    line_dash="dash", 
+                    line_color="gray", 
+                    annotation_text="Mức mục tiêu",
+                    annotation_position="right"
+                )
+                
+                # Cập nhật layout
+                fig.update_layout(
+                    title=chart_title,
+                    xaxis_title="",
+                    yaxis_title="Mức độ hoàn thành (%)",
+                    barmode='group',
+                    height=450,
+                    showlegend=True,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    margin=dict(l=30, r=30, t=60, b=100),
+                    xaxis=dict(tickangle=-45, tickfont=dict(size=10))
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Hiển thị bảng chi tiết nếu chọn khu vực cụ thể hoặc "Tất cả đơn vị"
+                if selected_region != "Tất cả" and not display_data.empty:
+                    with st.expander("📊 Xem bảng chi tiết", expanded=False):
+                        # Sắp xếp display_data TRƯỚC KHI tạo detail_df: theo Khu vực, sau đó theo DT đã bán giảm dần
+                        if 'region' in display_data.columns and 'revenue_actual' in display_data.columns:
+                            display_data = display_data.sort_values(['region', 'revenue_actual'], ascending=[True, False]).reset_index(drop=True)
+                        elif 'region' in display_data.columns:
+                            display_data = display_data.sort_values('region', ascending=True).reset_index(drop=True)
+                        elif 'revenue_actual' in display_data.columns:
+                            display_data = display_data.sort_values('revenue_actual', ascending=False).reset_index(drop=True)
+                        
+                        # Tạo bảng chi tiết với đầy đủ các cột
+                        detail_cols = ['business_unit']
+                        
+                        # Nếu là "Tất cả đơn vị", thêm cột khu vực
+                        if selected_region == "Tất cả đơn vị":
+                            detail_cols.append('region')
+                        
+                        # Thêm các cột số liệu nếu có
+                        if 'revenue_plan' in display_data.columns:
+                            detail_cols.extend(['revenue_plan', 'revenue_actual', 'revenue_completion'])
+                        if 'profit_plan' in display_data.columns:
+                            detail_cols.extend(['profit_plan', 'profit_actual', 'profit_completion'])
+                        
+                        # Lọc các cột có sẵn
+                        available_cols = [col for col in detail_cols if col in display_data.columns]
+                        detail_df = display_data[available_cols].copy()
+                        
+                        # Đặt tên cột tiếng Việt
+                        col_mapping = {
+                            'business_unit': 'Đơn vị',
+                            'region': 'Khu vực',
+                            'revenue_plan': 'DT Kế hoạch (tr.đ)',
+                            'revenue_actual': 'DT đã bán (tr.đ)',
+                            'revenue_completion': 'Tỷ lệ đạt DT (%)',
+                            'profit_plan': 'LG Kế hoạch (tr.đ)',
+                            'profit_actual': 'LG đã bán (tr.đ)',
+                            'profit_completion': 'Tỷ lệ đạt LG (%)'
+                        }
+                        
+                        detail_df = detail_df.rename(columns=col_mapping)
+                        
+                        # Sắp xếp thứ tự cột: Khu vực (nếu có), Đơn vị, DT Kế hoạch, DT đã bán, Tỷ lệ đạt DT, LG Kế hoạch, LG đã bán, Tỷ lệ đạt LG
+                        desired_order = ['Khu vực', 'Đơn vị', 'DT Kế hoạch (tr.đ)', 'DT đã bán (tr.đ)', 'Tỷ lệ đạt DT (%)', 'LG Kế hoạch (tr.đ)', 'LG đã bán (tr.đ)', 'Tỷ lệ đạt LG (%)']
+                        available_order = [col for col in desired_order if col in detail_df.columns]
+                        detail_df = detail_df[available_order]
+                        
+                        # Format các cột số
+                        if 'DT Kế hoạch (tr.đ)' in detail_df.columns:
+                            detail_df['DT Kế hoạch (tr.đ)'] = detail_df['DT Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                        if 'DT đã bán (tr.đ)' in detail_df.columns:
+                            detail_df['DT đã bán (tr.đ)'] = detail_df['DT đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                        if 'Tỷ lệ đạt DT (%)' in detail_df.columns:
+                            detail_df['Tỷ lệ đạt DT (%)'] = detail_df['Tỷ lệ đạt DT (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                        if 'LG Kế hoạch (tr.đ)' in detail_df.columns:
+                            detail_df['LG Kế hoạch (tr.đ)'] = detail_df['LG Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                        if 'LG đã bán (tr.đ)' in detail_df.columns:
+                            detail_df['LG đã bán (tr.đ)'] = detail_df['LG đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
+                        if 'Tỷ lệ đạt LG (%)' in detail_df.columns:
+                            detail_df['Tỷ lệ đạt LG (%)'] = detail_df['Tỷ lệ đạt LG (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
+                        
+                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+            else:
+                st.info(f"Không có dữ liệu cho khu vực '{selected_region}'")
             
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Hiển thị bảng chi tiết nếu chọn khu vực cụ thể hoặc "Tất cả đơn vị"
-            if selected_region != "Tất cả" and not display_data.empty:
-                with st.expander("📊 Xem bảng chi tiết", expanded=False):
-                    # Sắp xếp display_data TRƯỚC KHI tạo detail_df: theo Khu vực, sau đó theo DT đã bán giảm dần
-                    if 'region' in display_data.columns and 'revenue_actual' in display_data.columns:
-                        display_data = display_data.sort_values(['region', 'revenue_actual'], ascending=[True, False]).reset_index(drop=True)
-                    elif 'region' in display_data.columns:
-                        display_data = display_data.sort_values('region', ascending=True).reset_index(drop=True)
-                    elif 'revenue_actual' in display_data.columns:
-                        display_data = display_data.sort_values('revenue_actual', ascending=False).reset_index(drop=True)
-                    
-                    # Tạo bảng chi tiết với đầy đủ các cột
-                    detail_cols = ['business_unit']
-                    
-                    # Nếu là "Tất cả đơn vị", thêm cột khu vực
-                    if selected_region == "Tất cả đơn vị":
-                        detail_cols.append('region')
-                    
-                    # Thêm các cột số liệu nếu có
-                    if 'revenue_plan' in display_data.columns:
-                        detail_cols.extend(['revenue_plan', 'revenue_actual', 'revenue_completion'])
-                    if 'profit_plan' in display_data.columns:
-                        detail_cols.extend(['profit_plan', 'profit_actual', 'profit_completion'])
-                    
-                    # Lọc các cột có sẵn
-                    available_cols = [col for col in detail_cols if col in display_data.columns]
-                    detail_df = display_data[available_cols].copy()
-                    
-                    # Đặt tên cột tiếng Việt
-                    col_mapping = {
-                        'business_unit': 'Đơn vị',
-                        'region': 'Khu vực',
-                        'revenue_plan': 'DT Kế hoạch (tr.đ)',
-                        'revenue_actual': 'DT đã bán (tr.đ)',
-                        'revenue_completion': 'Tỷ lệ đạt DT (%)',
-                        'profit_plan': 'LG Kế hoạch (tr.đ)',
-                        'profit_actual': 'LG đã bán (tr.đ)',
-                        'profit_completion': 'Tỷ lệ đạt LG (%)'
-                    }
-                    
-                    detail_df = detail_df.rename(columns=col_mapping)
-                    
-                    # Sắp xếp thứ tự cột: Khu vực (nếu có), Đơn vị, DT Kế hoạch, DT đã bán, Tỷ lệ đạt DT, LG Kế hoạch, LG đã bán, Tỷ lệ đạt LG
-                    desired_order = ['Khu vực', 'Đơn vị', 'DT Kế hoạch (tr.đ)', 'DT đã bán (tr.đ)', 'Tỷ lệ đạt DT (%)', 'LG Kế hoạch (tr.đ)', 'LG đã bán (tr.đ)', 'Tỷ lệ đạt LG (%)']
-                    available_order = [col for col in desired_order if col in detail_df.columns]
-                    detail_df = detail_df[available_order]
-                    
-                    # Format các cột số
-                    if 'DT Kế hoạch (tr.đ)' in detail_df.columns:
-                        detail_df['DT Kế hoạch (tr.đ)'] = detail_df['DT Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
-                    if 'DT đã bán (tr.đ)' in detail_df.columns:
-                        detail_df['DT đã bán (tr.đ)'] = detail_df['DT đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
-                    if 'Tỷ lệ đạt DT (%)' in detail_df.columns:
-                        detail_df['Tỷ lệ đạt DT (%)'] = detail_df['Tỷ lệ đạt DT (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
-                    if 'LG Kế hoạch (tr.đ)' in detail_df.columns:
-                        detail_df['LG Kế hoạch (tr.đ)'] = detail_df['LG Kế hoạch (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
-                    if 'LG đã bán (tr.đ)' in detail_df.columns:
-                        detail_df['LG đã bán (tr.đ)'] = detail_df['LG đã bán (tr.đ)'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "0")
-                    if 'Tỷ lệ đạt LG (%)' in detail_df.columns:
-                        detail_df['Tỷ lệ đạt LG (%)'] = detail_df['Tỷ lệ đạt LG (%)'].apply(lambda x: f"{x:.1f}%" if pd.notna(x) else "0.0%")
-                    
-                    st.dataframe(detail_df, use_container_width=True, hide_index=True)
+            # Nút refresh dữ liệu
+            col_refresh1, col_refresh2 = st.columns([1, 5])
+            with col_refresh1:
+                if st.button("🔄 Làm mới dữ liệu", key="refresh_unit_completion"):
+                    unit_completion_data = load_unit_completion_data(unit_completion_url)
+                    st.session_state[cache_key] = unit_completion_data
+                    st.rerun()
         else:
-            st.info(f"Không có dữ liệu cho khu vực '{selected_region}'")
-        
-        # Nút refresh dữ liệu
-        col_refresh1, col_refresh2 = st.columns([1, 5])
-        with col_refresh1:
-            if st.button("🔄 Làm mới dữ liệu", key="refresh_unit_completion"):
+            st.warning("Không thể tải dữ liệu từ Google Sheet. Vui lòng kiểm tra URL và quyền truy cập.")
+            if st.button("🔄 Thử lại", key="retry_unit_completion"):
                 unit_completion_data = load_unit_completion_data(unit_completion_url)
                 st.session_state[cache_key] = unit_completion_data
                 st.rerun()
-    else:
-        st.warning("Không thể tải dữ liệu từ Google Sheet. Vui lòng kiểm tra URL và quyền truy cập.")
-        if st.button("🔄 Thử lại", key="retry_unit_completion"):
-            unit_completion_data = load_unit_completion_data(unit_completion_url)
-            st.session_state[cache_key] = unit_completion_data
-            st.rerun()
 
 
     # ============================================================

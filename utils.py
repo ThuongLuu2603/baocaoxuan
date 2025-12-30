@@ -740,6 +740,166 @@ def load_unit_completion_data(sheet_url):
         return pd.DataFrame()
 
 
+def load_unit_completion_data_tet(sheet_url):
+    """
+    Đọc dữ liệu mức độ hoàn thành kế hoạch đơn vị từ Google Sheet TẾT
+    Sheet URL: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=20510042#gid=20510042
+    
+    Cấu trúc:
+    - Dòng 3: Header cho TẾT (cột J, K, L, M)
+    - Cột J: Quốc gia/ tuyến tour
+    - Cột K: Doanh thu kế hoạch (Tỷ đồng)
+    - Cột L: Doanh thu đã bán (Tỷ đồng)
+    - Cột M: Tốc độ đạt kế hoạch (%)
+    
+    Returns: DataFrame với columns: business_unit, revenue_completion, profit_completion
+    """
+    import requests
+    import io
+    import re
+    
+    try:
+        # Chuyển đổi URL thành CSV export URL
+        sheet_id_match = re.search(r"/d/([a-zA-Z0-9-_]+)", sheet_url)
+        if not sheet_id_match:
+            return pd.DataFrame()
+        
+        sheet_id = sheet_id_match.group(1)
+        gid_match = re.search(r"[?&#]gid=(\d+)", sheet_url)
+        gid = gid_match.group(1) if gid_match else '20510042'  # Default gid từ URL
+        
+        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+        
+        # Tải CSV
+        resp = requests.get(csv_url, timeout=15)
+        resp.raise_for_status()
+        
+        # Đọc CSV
+        text = resp.content.decode('utf-8', errors='replace')
+        lines = text.split('\n')
+        
+        # Tìm dòng header (dòng 3, index 2) - chứa "Quốc gia/ tuyến tour" cho TẾT
+        header_idx = None
+        for i, line in enumerate(lines[:10]):
+            line_upper = line.upper()
+            if 'QUỐC GIA' in line_upper or 'QUOC GIA' in line_upper:
+                if 'TUYẾN TOUR' in line_upper or 'TUYEN TOUR' in line_upper:
+                    header_idx = i
+                    break
+        
+        if header_idx is None:
+            header_idx = 2  # Fallback: dòng 3 (index 2)
+        
+        # Đọc từ header_idx
+        df = pd.read_csv(io.StringIO('\n'.join(lines[header_idx:])), dtype=str, skipinitialspace=True)
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Tìm các cột cho TẾT (cột J, K, L, M - index 9, 10, 11, 12)
+        # Cột J (index 9): Quốc gia/ tuyến tour
+        # Cột K (index 10): Doanh thu kế hoạch (Tỷ đồng)
+        # Cột L (index 11): Doanh thu đã bán (Tỷ đồng)
+        # Cột M (index 12): Tốc độ đạt kế hoạch (%)
+        
+        unit_col = None
+        dt_plan_col = None
+        dt_actual_col = None
+        dt_completion_col = None
+        
+        # Tìm cột bằng tên
+        for col in df.columns:
+            col_upper = str(col).upper()
+            if ('QUỐC GIA' in col_upper or 'QUOC GIA' in col_upper) and ('TUYẾN TOUR' in col_upper or 'TUYEN TOUR' in col_upper):
+                unit_col = col
+            elif 'DOANH THU KẾ HOẠCH' in col_upper or 'DOANH THU KE HOACH' in col_upper:
+                dt_plan_col = col
+            elif 'DOANH THU ĐÃ BÁN' in col_upper or 'DOANH THU DA BAN' in col_upper:
+                dt_actual_col = col
+            elif 'TỐC ĐỘ ĐẠT KẾ HOẠCH' in col_upper or 'TOC DO DAT KE HOACH' in col_upper:
+                dt_completion_col = col
+        
+        # Fallback: dùng vị trí cột (cột J, K, L, M - index 9, 10, 11, 12)
+        if unit_col is None and len(df.columns) > 9:
+            unit_col = df.columns[9]  # Cột J
+        if dt_plan_col is None and len(df.columns) > 10:
+            dt_plan_col = df.columns[10]  # Cột K
+        if dt_actual_col is None and len(df.columns) > 11:
+            dt_actual_col = df.columns[11]  # Cột L
+        if dt_completion_col is None and len(df.columns) > 12:
+            dt_completion_col = df.columns[12]  # Cột M
+        
+        if unit_col is None or dt_completion_col is None:
+            return pd.DataFrame()
+        
+        # Lấy các cột cần thiết
+        cols_to_keep = [unit_col]
+        if dt_plan_col:
+            cols_to_keep.append(dt_plan_col)
+        if dt_actual_col:
+            cols_to_keep.append(dt_actual_col)
+        if dt_completion_col:
+            cols_to_keep.append(dt_completion_col)
+        
+        # Lọc dữ liệu
+        result_df = df[cols_to_keep].copy()
+        
+        # Đặt tên cột
+        col_names = ['business_unit']
+        if dt_plan_col:
+            col_names.append('revenue_plan')
+        if dt_actual_col:
+            col_names.append('revenue_actual')
+        if dt_completion_col:
+            col_names.append('revenue_completion')
+        
+        result_df.columns = col_names
+        
+        # Loại bỏ dòng trống
+        result_df = result_df[
+            (result_df['business_unit'].notna()) & 
+            (result_df['business_unit'].astype(str).str.strip() != '')
+        ].copy()
+        
+        # Xử lý số liệu
+        def parse_numeric(val):
+            if pd.isna(val) or val == '':
+                return 0
+            val_str = str(val).strip().replace(',', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+        
+        def parse_percentage(val):
+            if pd.isna(val) or val == '':
+                return 0
+            val_str = str(val).strip().replace('%', '').replace(',', '')
+            try:
+                return float(val_str)
+            except:
+                return 0
+        
+        # Parse các giá trị
+        if 'revenue_plan' in result_df.columns:
+            result_df['revenue_plan'] = result_df['revenue_plan'].apply(parse_numeric)
+        if 'revenue_actual' in result_df.columns:
+            result_df['revenue_actual'] = result_df['revenue_actual'].apply(parse_numeric)
+        if 'revenue_completion' in result_df.columns:
+            result_df['revenue_completion'] = result_df['revenue_completion'].apply(parse_percentage)
+        
+        # Thêm cột profit_completion = revenue_completion (vì sheet TẾT không có LG riêng)
+        result_df['profit_completion'] = result_df['revenue_completion']
+        
+        # Thêm cột is_region (giả sử tất cả là đơn vị, không phải khu vực)
+        result_df['is_region'] = False
+        
+        return result_df
+        
+    except Exception as e:
+        return pd.DataFrame()
+
+
 def load_route_performance_data(sheet_url):
     """
     Đọc dữ liệu tốc độ đạt kế hoạch theo tuyến từ Google Sheet

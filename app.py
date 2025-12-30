@@ -694,13 +694,19 @@ with tab1:
     # Kiểm tra xem region_filter có thay đổi không
     last_region_filter = st.session_state.get('last_region_filter', None)
     if last_region_filter != region_filter:
-        # Xóa cache cũ nếu region_filter thay đổi
+        # Xóa cache cũ nếu region_filter thay đổi (bao gồm cả total_plan cache)
         old_cache_key_tet = f'plan_tet_data_{plan_tet_url}_{last_region_filter}'
         old_cache_key_xuan = f'plan_xuan_data_{plan_xuan_url}_{last_region_filter}'
         if old_cache_key_tet in st.session_state:
             del st.session_state[old_cache_key_tet]
         if old_cache_key_xuan in st.session_state:
             del st.session_state[old_cache_key_xuan]
+        
+        # Clear total_plan cache khi region thay đổi
+        keys_to_clear = [k for k in st.session_state.keys() if 'total_plan_' in k]
+        for key in keys_to_clear:
+            del st.session_state[key]
+        
         st.session_state['last_region_filter'] = region_filter
     
     if cache_key_plan_tet not in st.session_state:
@@ -731,6 +737,9 @@ with tab1:
     # Lấy giai đoạn từ filter
     selected_period = st.session_state.get('filter_period', 'KM XUÂN')
     
+    # Lấy selected_region từ session_state (đã được set từ sidebar)
+    selected_region_for_plan = st.session_state.get('filter_region', 'Tất cả')
+    
     # Chỉ load và dùng số kế hoạch từ sheet tương ứng với giai đoạn đã chọn
     total_plan_dom_lk = 0
     total_plan_dom_dt = 0
@@ -742,12 +751,49 @@ with tab1:
     is_tet = period_normalized in ['TẾT', 'TET']
     is_xuan = period_normalized in ['KM XUÂN', 'KM XUAN', 'XUÂN', 'XUAN']
     
+    # Map tên khu vực từ filter với tên khu vực trong sheet
+    region_name_for_plan = None
+    if selected_region_for_plan != 'Tất cả':
+        # Map tất cả các biến thể có thể có (có dấu, không dấu, uppercase, lowercase)
+        region_mapping = {
+            'Miền Bắc': 'Miền Bắc',
+            'Mien Bac': 'Miền Bắc',
+            'MIEN BAC': 'Miền Bắc',
+            'Mien Bac': 'Miền Bắc',
+            'Miền Trung': 'Miền Trung',
+            'Mien Trung': 'Miền Trung',
+            'MIEN TRUNG': 'Miền Trung',
+            'Mien Trung': 'Miền Trung',
+            'TPHCM & DNB': 'TPHCM & DNB',
+            'TPHCM DNB': 'TPHCM & DNB',
+            'TPHCM & DNB': 'TPHCM & DNB',
+            'Miền Tây': 'Miền Tây',
+            'Mien Tay': 'Miền Tây',
+            'MIEN TAY': 'Miền Tây',
+            'Mien Tay': 'Miền Tây',
+        }
+        # Chuẩn hóa tên khu vực
+        selected_region_normalized = str(selected_region_for_plan).strip()
+        region_name_for_plan = region_mapping.get(selected_region_normalized, None)
+        # Nếu không tìm thấy exact match, thử tìm partial match (case-insensitive)
+        if region_name_for_plan is None:
+            selected_region_upper = selected_region_normalized.upper()
+            # Map theo pattern matching
+            if 'MIEN' in selected_region_upper and 'BAC' in selected_region_upper and 'TRUNG' not in selected_region_upper:
+                region_name_for_plan = 'Miền Bắc'
+            elif 'MIEN' in selected_region_upper and 'TRUNG' in selected_region_upper:
+                region_name_for_plan = 'Miền Trung'
+            elif 'TPHCM' in selected_region_upper or 'DNB' in selected_region_upper:
+                region_name_for_plan = 'TPHCM & DNB'
+            elif 'MIEN' in selected_region_upper and 'TAY' in selected_region_upper:
+                region_name_for_plan = 'Miền Tây'
+    
     if is_tet:
         # Chỉ lấy từ sheet Tết
-        cache_key_total_plan_tet = f'total_plan_tet_{plan_tet_url}'
+        cache_key_total_plan_tet = f'total_plan_tet_{plan_tet_url}_{region_name_for_plan}'
         if cache_key_total_plan_tet not in st.session_state:
             with st.spinner('Đang tải tổng kế hoạch Tết...'):
-                total_plan_tet = load_total_plan_data(plan_tet_url, period_name='TẾT')
+                total_plan_tet = load_total_plan_data(plan_tet_url, period_name='TẾT', region_name=region_name_for_plan)
                 st.session_state[cache_key_total_plan_tet] = total_plan_tet
         else:
             total_plan_tet = st.session_state[cache_key_total_plan_tet]
@@ -758,10 +804,10 @@ with tab1:
         total_plan_out_dt = total_plan_tet.get('out_dt', 0)  # Đơn vị: tr.d
     elif is_xuan:
         # Chỉ lấy từ sheet Xuân
-        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}'
+        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}_{region_name_for_plan}'
         if cache_key_total_plan_xuan not in st.session_state:
             with st.spinner('Đang tải tổng kế hoạch Xuân...'):
-                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN')
+                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN', region_name=region_name_for_plan)
                 st.session_state[cache_key_total_plan_xuan] = total_plan_xuan
         else:
             total_plan_xuan = st.session_state[cache_key_total_plan_xuan]
@@ -772,10 +818,10 @@ with tab1:
         total_plan_out_dt = total_plan_xuan.get('out_dt', 0)  # Đơn vị: tr.d
     else:
         # Mặc định là Xuân nếu không xác định được
-        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}'
+        cache_key_total_plan_xuan = f'total_plan_xuan_{plan_xuan_url}_{region_name_for_plan}'
         if cache_key_total_plan_xuan not in st.session_state:
             with st.spinner('Đang tải tổng kế hoạch Xuân...'):
-                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN')
+                total_plan_xuan = load_total_plan_data(plan_xuan_url, period_name='KM XUÂN', region_name=region_name_for_plan)
                 st.session_state[cache_key_total_plan_xuan] = total_plan_xuan
         else:
             total_plan_xuan = st.session_state[cache_key_total_plan_xuan]
@@ -795,10 +841,14 @@ with tab1:
     # Lấy region_filter để kiểm tra xem có thay đổi không
     last_region_filter_etour = st.session_state.get('last_region_filter_etour', None)
     
-    # Nếu region filter thay đổi, clear cache để reload dữ liệu
+    # Nếu region filter thay đổi, clear cache để reload dữ liệu (bao gồm cả total_plan cache)
     if last_region_filter_etour != selected_region:
         if cache_key_etour in st.session_state:
             del st.session_state[cache_key_etour]
+        # Clear total_plan cache khi region thay đổi
+        keys_to_clear = [k for k in st.session_state.keys() if 'total_plan_' in k]
+        for key in keys_to_clear:
+            del st.session_state[key]
         st.session_state['last_region_filter_etour'] = selected_region
     
     if cache_key_etour not in st.session_state:
@@ -997,7 +1047,7 @@ with tab1:
             domestic_seats_data['remaining_seats'] = (domestic_seats_data['plan_seats'] - domestic_seats_data['actual_seats']).clip(lower=0)
             
             # Tính tổng % đạt kế hoạch
-            # QUAN TRỌNG: Dùng số kế hoạch TỔNG từ sheet "Kế hoạch xuân" và "Kế hoạch tết" (Dom Total)
+            # Dùng số kế hoạch từ load_total_plan_data (đã lấy theo khu vực nếu có filter)
             # Chuyển đổi từ tr.d sang VNĐ: total_plan_dom_dt * 1_000_000
             total_plan_revenue = total_plan_dom_dt * 1_000_000  # Đơn vị: VNĐ
             total_plan_seats = total_plan_dom_lk  # Đơn vị: LK
@@ -1016,7 +1066,7 @@ with tab1:
                 total_actual_revenue_tr = total_actual_revenue / 1_000_000
                 st.markdown(f"""
                     <div style="background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%); 
-                                padding: 16px 20px; 
+                                padding: 12px 16px; 
                                 border-radius: 8px; 
                                 border: none;
                                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -1043,15 +1093,15 @@ with tab1:
                                 border: none;
                                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                                 margin-left: 5px;">
-                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
-                            Kế hoạch LK đạt
+                        <div style="text-align: center; font-size: 12px; color: #6c757d; margin-bottom: 12px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch Lượt khách đạt
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                            <div style="font-size: 12px; color: #495057; line-height: 1.6;">
                                 <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_seats:,.0f} LK</span></div>
                                 <div>TH: <span style="font-weight: 600;">{total_actual_seats:,.0f} LK</span></div>
                             </div>
-                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                            <div style="font-size: 32px; font-weight: 700; color: #1f77b4; line-height: 1;">
                                 {completion_seats_pct:.1f}%
                             </div>
                         </div>
@@ -1143,6 +1193,9 @@ with tab1:
                 }
                 if 'plan_revenue_etour' in domestic_seats_data_filtered.columns:
                     agg_dict['plan_revenue_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột G)
+                # Thêm plan_seats_etour (SL Dự kiến từ cột B của ETOUR)
+                if 'plan_seats_etour' in domestic_seats_data_filtered.columns:
+                    agg_dict['plan_seats_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột B)
                 
                 domestic_seats_detail = domestic_seats_data_filtered.groupby(groupby_col).agg(agg_dict).reset_index()
                 
@@ -1179,7 +1232,7 @@ with tab1:
                     'Tốc độ đạt kế hoạch DT (%)': domestic_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
                     'Doanh số còn (Tr.đ)': domestic_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Lượt khách dự kiến': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Lượt khách dự kiến': domestic_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in domestic_seats_detail.columns else domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': domestic_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': domestic_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
                     'LK kế hoạch còn': domestic_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
@@ -1204,7 +1257,7 @@ with tab1:
             outbound_seats_data['remaining_seats'] = (outbound_seats_data['plan_seats'] - outbound_seats_data['actual_seats']).clip(lower=0)
             
             # Tính tổng % đạt kế hoạch
-            # QUAN TRỌNG: Dùng số kế hoạch TỔNG từ sheet "Kế hoạch xuân" và "Kế hoạch tết" (Out Total)
+            # Dùng số kế hoạch từ load_total_plan_data (đã lấy theo khu vực nếu có filter)
             # Chuyển đổi từ tr.d sang VNĐ: total_plan_out_dt * 1_000_000
             total_plan_revenue = total_plan_out_dt * 1_000_000  # Đơn vị: VNĐ
             total_plan_seats = total_plan_out_lk  # Đơn vị: LK
@@ -1228,15 +1281,15 @@ with tab1:
                                 border: none;
                                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                                 margin-right: 5px;">
-                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
+                        <div style="text-align: center; font-size: 12px; color: #6c757d; margin-bottom: 12px; font-weight: 600; letter-spacing: 0.5px;">
                             Kế hoạch Doanh Thu Đạt
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                            <div style="font-size: 12px; color: #495057; line-height: 1.6;">
                                 <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_revenue_tr:,.0f} tr.d</span></div>
                                 <div>TH: <span style="font-weight: 600;">{total_actual_revenue_tr:,.0f} tr.d</span></div>
                             </div>
-                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                            <div style="font-size: 32px; font-weight: 700; color: #1f77b4; line-height: 1;">
                                 {completion_revenue_pct:.1f}%
                             </div>
                         </div>
@@ -1250,15 +1303,15 @@ with tab1:
                                 border: none;
                                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
                                 margin-left: 5px;">
-                        <div style="text-align: center; font-size: 11px; color: #6c757d; margin-bottom: 10px; font-weight: 600; letter-spacing: 0.5px;">
-                            Kế hoạch LK đạt
+                        <div style="text-align: center; font-size: 12px; color: #6c757d; margin-bottom: 12px; font-weight: 600; letter-spacing: 0.5px;">
+                            Kế hoạch Lượt khách đạt
                         </div>
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="font-size: 11px; color: #495057; line-height: 1.6;">
+                            <div style="font-size: 12px; color: #495057; line-height: 1.6;">
                                 <div style="margin-bottom: 4px;">KH: <span style="font-weight: 600;">{total_plan_seats:,.0f} LK</span></div>
                                 <div>TH: <span style="font-weight: 600;">{total_actual_seats:,.0f} LK</span></div>
                             </div>
-                            <div style="font-size: 24px; font-weight: 700; color: #1f77b4; line-height: 1;">
+                            <div style="font-size: 32px; font-weight: 700; color: #1f77b4; line-height: 1;">
                                 {completion_seats_pct:.1f}%
                             </div>
                         </div>
@@ -1324,6 +1377,9 @@ with tab1:
                 }
                 if 'plan_revenue_etour' in outbound_seats_data_filtered.columns:
                     agg_dict['plan_revenue_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột G)
+                # Thêm plan_seats_etour (SL Dự kiến từ cột B của ETOUR)
+                if 'plan_seats_etour' in outbound_seats_data_filtered.columns:
+                    agg_dict['plan_seats_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột B)
                 
                 outbound_seats_detail = outbound_seats_data_filtered.groupby(groupby_col).agg(agg_dict).reset_index()
                 
@@ -1360,7 +1416,7 @@ with tab1:
                     'Tốc độ đạt kế hoạch DT (%)': outbound_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
                     'DT kế hoạch còn (Tr.đ)': outbound_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Lượt khách dự kiến': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Lượt khách dự kiến': outbound_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in outbound_seats_detail.columns else outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': outbound_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': outbound_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
                     'LK kế hoạch còn': outbound_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
@@ -2153,7 +2209,7 @@ with tab1:
             merged_data.loc[unmatched_mask, 'plan_revenue'] = merged_data.loc[unmatched_mask, 'plan_revenue'].fillna(merged_unmatched['plan_revenue_fallback'])
             merged_data.loc[unmatched_mask, 'plan_customers'] = merged_data.loc[unmatched_mask, 'plan_customers'].fillna(merged_unmatched['plan_customers_fallback'])
             merged_data.loc[unmatched_mask, 'plan_profit'] = merged_data.loc[unmatched_mask, 'plan_profit'].fillna(merged_unmatched['plan_profit_fallback'])
-        
+            
         # KHÔNG có fallback thêm nữa - nếu không match được, để NaN (sẽ hiển thị 0)
         
         # Tính phần trăm hoàn thành

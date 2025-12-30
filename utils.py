@@ -1017,6 +1017,17 @@ def create_route_performance_chart(route_data, metric='revenue', title=''):
         (~route_data['route'].astype(str).str.upper().str.contains('NAN', na=False))
     ].copy()
     
+    # Loại bỏ các tuyến có giá trị = 0
+    route_data = route_data[
+        (route_data['value_display'].fillna(0) != 0)
+    ].copy()
+    
+    if route_data.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Không có dữ liệu", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(height=400)
+        return fig
+    
     # Sắp xếp theo value giảm dần và lấy top routes
     # Sắp xếp giảm dần theo value_display, nếu bằng nhau thì sắp xếp theo route để đảm bảo thứ tự ổn định
     data = route_data.sort_values(
@@ -1686,7 +1697,7 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         return pd.DataFrame()
 
 
-def load_total_plan_data(sheet_url, period_name='TẾT'):
+def load_total_plan_data(sheet_url, period_name='TẾT', region_name=None):
     """
     Đọc tổng kế hoạch từ Google Sheet (Dom Total và Out Total)
     Sheet URL Tết: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=1651160424#gid=1651160424
@@ -1694,12 +1705,18 @@ def load_total_plan_data(sheet_url, period_name='TẾT'):
     
     Cấu trúc CSV:
     - Dòng 5 (index 4): Header: Nhom tuyen, Tuyến Tour, LK, DT (tr.d), LG (tr.d)...
-    - Dòng 17: "Dom Total" - tổng Nội địa (cột C: LK, cột D: DT)
-    - Dòng 39: "Out Total" - tổng Outbound (cột C: LK, cột D: DT)
+    - Dòng 17: "Dom Total" - tổng Nội địa 
+      - Cột C: LK (Công ty), Cột D: DT (Công ty)
+      - Cột F: LK (Miền Bắc), Cột G: DT (Miền Bắc)
+      - Cột I: LK (Miền Trung), Cột J: DT (Miền Trung)
+      - Cột L: LK (TPHCM & DNB), Cột M: DT (TPHCM & DNB)
+      - Cột O: LK (Miền Tây), Cột P: DT (Miền Tây)
+    - Dòng 39: "Out Total" - tổng Outbound (tương tự)
     
     Args:
         sheet_url: URL của Google Sheet
         period_name: Tên giai đoạn ('TẾT' hoặc 'KM XUÂN')
+        region_name: Tên khu vực ('Miền Bắc', 'Miền Trung', 'TPHCM & DNB', 'Miền Tây') hoặc None để lấy tổng Công ty
     
     Returns: Dictionary với keys: 'dom_lk', 'dom_dt', 'out_lk', 'out_dt' (đơn vị: LK và tr.d)
     """
@@ -1763,9 +1780,31 @@ def load_total_plan_data(sheet_url, period_name='TẾT'):
         if route_col is None and len(df.columns) > 1:
             route_col = df.columns[1]  # Cột B
         
-        # Cột C: LK (index 2), Cột D: DT (tr.d) (index 3)
-        lk_col = df.columns[2] if len(df.columns) > 2 else None
-        dt_col = df.columns[3] if len(df.columns) > 3 else None
+        # Map tên khu vực với chỉ số cột (LK, DT)
+        # Cột C (index 2): LK Công ty, Cột D (index 3): DT Công ty
+        # Cột F (index 5): LK Miền Bắc, Cột G (index 6): DT Miền Bắc
+        # Cột I (index 8): LK Miền Trung, Cột J (index 9): DT Miền Trung
+        # Cột L (index 11): LK TPHCM & DNB, Cột M (index 12): DT TPHCM & DNB
+        # Cột O (index 14): LK Miền Tây, Cột P (index 15): DT Miền Tây
+        region_col_map = {
+            'Miền Bắc': {'lk': 5, 'dt': 6},  # Cột F, G
+            'Miền Trung': {'lk': 8, 'dt': 9},  # Cột I, J
+            'TPHCM & DNB': {'lk': 11, 'dt': 12},  # Cột L, M
+            'Miền Tây': {'lk': 14, 'dt': 15},  # Cột O, P
+        }
+        
+        # Xác định cột cần lấy
+        if region_name and region_name in region_col_map:
+            # Lấy từ cột khu vực
+            lk_col_idx = region_col_map[region_name]['lk']
+            dt_col_idx = region_col_map[region_name]['dt']
+        else:
+            # Lấy từ cột Công ty (mặc định)
+            lk_col_idx = 2  # Cột C
+            dt_col_idx = 3  # Cột D
+        
+        lk_col = df.columns[lk_col_idx] if len(df.columns) > lk_col_idx else None
+        dt_col = df.columns[dt_col_idx] if len(df.columns) > dt_col_idx else None
         
         if not lk_col or not dt_col:
             return {'dom_lk': 0, 'dom_dt': 0, 'out_lk': 0, 'out_dt': 0}
@@ -1843,6 +1882,24 @@ def create_completion_progress_chart(completion_data, title=''):
         fig.update_layout(height=400)
         return fig
 
+    # Loại bỏ các dòng "Out Total", "Dom Total", "Grand Total" khỏi biểu đồ
+    completion_data = completion_data[
+        ~completion_data['route'].astype(str).str.contains('Grand Total|Dom Total|Out Total', case=False, na=False)
+    ].copy()
+    
+    # Loại bỏ các tuyến có 0% cho cả 3 chỉ số (Lượt khách, Doanh thu, Lãi Gộp)
+    completion_data = completion_data[
+        ~((completion_data['completion_customers'].fillna(0) == 0) & 
+          (completion_data['completion_revenue'].fillna(0) == 0) & 
+          (completion_data['completion_profit'].fillna(0) == 0))
+    ].copy()
+    
+    if completion_data.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="Không có dữ liệu", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+        fig.update_layout(height=400)
+        return fig
+
     # Sắp xếp theo completion_revenue giảm dần (từ cao xuống thấp)
     completion_data = completion_data.sort_values('completion_revenue', ascending=False).copy()
     
@@ -1856,6 +1913,9 @@ def create_completion_progress_chart(completion_data, title=''):
         y=completion_data['completion_customers'].values,
         name='Lượt khách',
         marker_color='#FFA15A',  # Màu cam
+        text=[f"{v:.1f}%" for v in completion_data['completion_customers'].values],
+        textposition='outside',
+        textfont=dict(size=10),
         hovertemplate='<b>%{x}</b><br>Lượt khách: %{y:.1f}%<extra></extra>'
     ))
     
@@ -1865,6 +1925,9 @@ def create_completion_progress_chart(completion_data, title=''):
         y=completion_data['completion_revenue'].values,
         name='Doanh thu',
         marker_color='#636EFA',  # Màu xanh dương
+        text=[f"{v:.1f}%" for v in completion_data['completion_revenue'].values],
+        textposition='outside',
+        textfont=dict(size=10),
         hovertemplate='<b>%{x}</b><br>Doanh thu: %{y:.1f}%<extra></extra>'
     ))
     
@@ -1874,6 +1937,9 @@ def create_completion_progress_chart(completion_data, title=''):
         y=completion_data['completion_profit'].values,
         name='Lãi Gộp',
         marker_color='#00CC96',  # Màu xanh lá
+        text=[f"{v:.1f}%" for v in completion_data['completion_profit'].values],
+        textposition='outside',
+        textfont=dict(size=10),
         hovertemplate='<b>%{x}</b><br>Lãi Gộp: %{y:.1f}%<extra></extra>'
     ))
     
@@ -1888,9 +1954,17 @@ def create_completion_progress_chart(completion_data, title=''):
     ))
     
     # Tính tổng doanh thu đã đạt
-    total_revenue_actual = completion_data['revenue'].sum()
-    total_revenue_plan = completion_data['plan_revenue'].sum()
-    total_completion = (total_revenue_actual / total_revenue_plan * 100) if total_revenue_plan > 0 else 0
+    # Loại bỏ các dòng "Grand Total", "Dom Total", "Out Total" trước khi tính tổng
+    filtered_data = completion_data[
+        ~completion_data['route'].astype(str).str.contains('Grand Total|Dom Total|Out Total', case=False, na=False)
+    ].copy()
+    
+    if filtered_data.empty:
+        total_completion = 0
+    else:
+        total_revenue_actual = filtered_data['revenue'].sum()
+        total_revenue_plan = filtered_data['plan_revenue'].sum()
+        total_completion = (total_revenue_actual / total_revenue_plan * 100) if total_revenue_plan > 0 else 0
     
     fig.update_layout(
         title=title,
@@ -1912,14 +1986,14 @@ def create_completion_progress_chart(completion_data, title=''):
         annotations=[
             dict(
                 x=1,
-                y=0,
+                y=1,
                 xref="paper",
                 yref="paper",
                 text=f"TỔNG DOANH THU ĐÃ ĐẠT {total_completion:.0f}% MỤC TIÊU ĐƯA RA",
                 showarrow=False,
                 xanchor="right",
-                yanchor="bottom",
-                font=dict(size=10, color="gray")
+                yanchor="top",
+                font=dict(size=12, color="gray", weight="bold")
             )
         ],
         margin=dict(l=50, r=50, t=80, b=100)
@@ -2277,7 +2351,7 @@ def create_seats_tracking_chart(data, title=''):
                 y=total_seats,
                 text=f"LK: <b>{completion_pct:.1f}%</b>",
                 showarrow=False,
-                font=dict(size=14, color='#dc3545', family='Arial Black'),  # Màu đỏ cho LK
+                font=dict(size=10, color='#dc3545', family='Arial Black'),  # Màu đỏ cho LK
                 yshift=15,
                 xshift=-25,  # Đẩy sang trái để tách khỏi DT
                 yref='y'
@@ -2291,9 +2365,9 @@ def create_seats_tracking_chart(data, title=''):
             fig.add_annotation(
                 x=route,
                 y=actual_revenue_tr,
-                text=f"DT: <b>{completion_pct:.1f}%</b>",
+                text=f"DT: {completion_pct:.1f}%",
                 showarrow=False,
-                font=dict(size=14, color='#FFD700', family='Arial Black'),  # Màu vàng cho DT
+                font=dict(size=10, color='#FFD700', family='Arial Black'),  # Màu vàng cho DT
                 yshift=20,
                 xshift=25,  # Đẩy sang phải để tách khỏi LK
                 yref='y2'

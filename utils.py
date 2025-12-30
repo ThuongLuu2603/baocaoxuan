@@ -1604,20 +1604,54 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         ].copy()
         
         # Phân loại route_type: Nội địa vs Outbound
-        domestic_keywords = ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM', 'DOM TOTAL', 'BẮC TRUNG BỘ', 'TÂY NGUYÊN', 'NHA TRANG', 'QUY NHƠN', 'NAM TRUNG BỘ', 'PHÚ QUỐC', 'MIỀN TÂY', 'ĐÔNG NAM BỘ']
-        outbound_keywords = ['CHAU A', 'DONG BAC A', 'DONG NAM A', 'TAY A', 'NAM A', 'CHAU AU', 'CHAU UC', 'CHÂU MỸ', 'CHAU PHI', 'OUT TOTAL', 'TRUNG QUỐC', 'NHẬT BẢN', 'ĐÀI LOAN', 'HÀN QUỐC', 'HONG KONG', 'THÁI LAN', 'SINGAPORE', 'MALAYSIA', 'INDONESIA', 'LÀO', 'CAMPUCHIA', 'BRUNEI', 'MỸ', 'CANADA']
+        domestic_keywords = ['MIEN BAC', 'MIEN TRUNG', 'MIEN NAM', 'DOM TOTAL', 'BẮC TRUNG BỘ', 'TÂY NGUYÊN', 'NHA TRANG', 'QUY NHƠN', 'NAM TRUNG BỘ', 'PHÚ QUỐC', 'MIỀN TÂY', 'ĐÔNG NAM BỘ', 'LIÊN TUYẾN']
+        outbound_keywords = [
+            # Châu Á
+            'CHAU A', 'DONG BAC A', 'DONG NAM A', 'TAY A', 'NAM A', 
+            'CHÂU Á', 'ĐÔNG BẮC Á', 'ĐÔNG NAM Á', 'TÂY Á', 'NAM Á',
+            # Châu Âu, Úc, Mỹ, Phi
+            'CHAU AU', 'CHÂU ÂU', 'CHAU UC', 'CHÂU ÚC', 'CHAU MY', 'CHÂU MỸ', 'CHAU PHI', 'CHÂU PHI',
+            'EUROPE', 'AUSTRALIA', 'AMERICA',
+            # Các nước cụ thể
+            'OUT TOTAL', 'TRUNG QUỐC', 'NHẬT BẢN', 'ĐÀI LOAN', 'HÀN QUỐC', 'HONG KONG', 
+            'THÁI LAN', 'SINGAPORE', 'MALAYSIA', 'SING - MÃ', 'SING - MA', 'SING-MÃ', 'SING-MA',
+            'INDONESIA', 'LÀO', 'CAMPUCHIA', 'BRUNEI', 'MỸ', 'CANADA'
+        ]
         
         def classify_route_type(nhom_tuyen, route):
             nhom_upper = str(nhom_tuyen).upper()
             route_upper = str(route).upper()
             
+            # Chuẩn hóa để so sánh (loại bỏ dấu và khoảng trắng)
+            def normalize_for_match(text):
+                text = text.replace('Â', 'A').replace('Á', 'A').replace('À', 'A').replace('Ạ', 'A').replace('Ã', 'A')
+                text = text.replace('Ê', 'E').replace('É', 'E').replace('È', 'E').replace('Ẹ', 'E')
+                text = text.replace('Ô', 'O').replace('Ố', 'O').replace('Ồ', 'O').replace('Ọ', 'O')
+                text = text.replace('Ơ', 'O').replace('Ớ', 'O').replace('Ờ', 'O').replace('Ợ', 'O')
+                text = text.replace('Ư', 'U').replace('Ứ', 'U').replace('Ừ', 'U').replace('Ự', 'U')
+                text = text.replace('Đ', 'D').replace('Ý', 'Y').replace('Ỳ', 'Y').replace('Ỵ', 'Y')
+                text = text.replace('-', ' ').replace('_', ' ')
+                text = ' '.join(text.split())  # Loại bỏ khoảng trắng thừa
+                return text
+            
+            nhom_normalized = normalize_for_match(nhom_upper)
+            route_normalized = normalize_for_match(route_upper)
+            
             # Kiểm tra Outbound trước
             for keyword in outbound_keywords:
+                keyword_normalized = normalize_for_match(keyword.upper())
+                if keyword_normalized in nhom_normalized or keyword_normalized in route_normalized:
+                    return 'Outbound'
+                # Kiểm tra với keyword gốc (có dấu)
                 if keyword in nhom_upper or keyword in route_upper:
                     return 'Outbound'
             
             # Kiểm tra Nội địa
             for keyword in domestic_keywords:
+                keyword_normalized = normalize_for_match(keyword.upper())
+                if keyword_normalized in nhom_normalized or keyword_normalized in route_normalized:
+                    return 'Nội địa'
+                # Kiểm tra với keyword gốc (có dấu)
                 if keyword in nhom_upper or keyword in route_upper:
                     return 'Nội địa'
             
@@ -1626,6 +1660,12 @@ def load_route_plan_data(sheet_url, period_name='TẾT', region_filter=None):
         
         result_df['route_type'] = result_df.apply(lambda row: classify_route_type(row['nhom_tuyen'], row['route']), axis=1)
         result_df['period'] = period_name
+        
+        # QUAN TRỌNG: Loại bỏ các dòng có route là "Dom Total", "Out Total", "Grand Total" trước khi groupby
+        # Vì các dòng này không phải là route cụ thể và có thể gây nhầm lẫn
+        result_df = result_df[
+            ~result_df['route'].astype(str).str.contains('Dom Total|Out Total|Grand Total', case=False, na=False)
+        ].copy()
         
         # QUAN TRỌNG: Nếu có nhiều dòng cho cùng một route (có thể từ các nguồn khác nhau),
         # lấy giá trị lớn nhất để đảm bảo lấy đúng giá trị từ tổng Công ty
@@ -2226,7 +2266,7 @@ def load_completion_progress_actual_data(sheet_url):
         return pd.DataFrame()
 
 
-def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
+def load_completion_progress_plan_data(sheet_url, period_name='TẾT', region_filter=None):
     """
     Đọc dữ liệu kế hoạch cho phần Tiến độ hoàn thành kế hoạch từ Google Sheet.
     URL Tết: https://docs.google.com/spreadsheets/d/1Phksbyj11bmX9XKxYvxDJUlzq2rbblGUeqVLUtWFDuc/edit?gid=1651160424#gid=1651160424
@@ -2234,9 +2274,17 @@ def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
     
     Cấu trúc:
     - Cột A: Nhóm tuyến (Dom Total, Out Total, Grand Total) - KHÔNG lấy từ cột B (Tuyến tour)
-    - Cột C: LK Kế hoạch công ty
-    - Cột D: DT Kế hoạch công ty
-    - Cột E: LG Kế hoạch Công ty
+    - Cột C, D, E: LK, DT, LG Kế hoạch công ty (nếu region_filter=None hoặc 'Tất cả')
+    - Cột F, G, H: LK, DT, LG Kế hoạch Miền Bắc (nếu region_filter='Mien Bac')
+    - Cột I, J, K: LK, DT, LG Kế hoạch Miền Trung (nếu region_filter='Mien Trung')
+    - ...
+    
+    Args:
+        sheet_url: URL của Google Sheet
+        period_name: Tên giai đoạn ('TẾT' hoặc 'KM XUÂN')
+        region_filter: Tên khu vực để filter ('Tất cả', 'Mien Bac', 'Mien Trung', 'Mien Nam', hoặc None)
+                      Nếu None hoặc 'Tất cả', sẽ lấy tổng Công ty (cột C, D, E)
+                      Nếu có region_filter cụ thể, sẽ lấy cột tương ứng với khu vực đó
     
     Returns: DataFrame với columns: nhom_tuyen, plan_customers, plan_revenue, plan_profit, period
     Chỉ lấy các dòng có nhom_tuyen là "Dom Total", "Out Total", "Grand Total"
@@ -2265,7 +2313,7 @@ def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
         
         # Đọc CSV
         text = resp.content.decode('utf-8', errors='replace')
-        lines = text.split('\n')
+        lines = [line.rstrip('\r') for line in text.split('\n')]  # Loại bỏ \r để tránh lỗi
         
         # Tìm dòng header (dòng 5, index 4) - chứa "Nhom tuyen" và "Tuyến Tour"
         header_idx = None
@@ -2278,6 +2326,25 @@ def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
         
         if header_idx is None:
             header_idx = 4 if len(lines) > 4 else 0
+        
+        # Đọc dòng 4 (index 3) TRƯỚC khi đọc DataFrame để có region_headers
+        region_row_idx = 3  # Dòng 4 (index 3)
+        region_headers = []
+        if len(lines) > region_row_idx:
+            try:
+                # Đọc dòng 4 bằng pandas để parse CSV chính xác
+                region_df = pd.read_csv(io.StringIO(lines[region_row_idx]), header=None, nrows=1)
+                if not region_df.empty:
+                    region_headers = [str(col).strip() for col in region_df.iloc[0].values]
+            except Exception as e:
+                # Fallback: dùng split đơn giản với CSV parser
+                import csv
+                try:
+                    reader = csv.reader([lines[region_row_idx]])
+                    region_headers = [col.strip().strip('"').strip("'") for col in next(reader)]
+                except:
+                    region_line = lines[region_row_idx]
+                    region_headers = [col.strip().strip('"').strip("'") for col in region_line.split(',')]
         
         # Đọc từ dòng header
         df = pd.read_csv(io.StringIO('\n'.join(lines[header_idx:])), skipinitialspace=True)
@@ -2300,21 +2367,246 @@ def load_completion_progress_plan_data(sheet_url, period_name='TẾT'):
         if nhom_tuyen_col is None:
             return pd.DataFrame()
         
-        # Lấy giá trị từ cột tổng Công ty (cột C, D, E)
-        # Cột C (index 2): LK Kế hoạch công ty
-        # Cột D (index 3): DT Kế hoạch công ty  
-        # Cột E (index 4): LG Kế hoạch Công ty
-        
+        # Xác định cột cần lấy dựa trên region_filter
         customers_col = None
         revenue_col = None
         profit_col = None
         
-        if len(df.columns) > 2:
-            customers_col = df.columns[2]  # Cột C: LK Kế hoạch công ty
-        if len(df.columns) > 3:
-            revenue_col = df.columns[3]  # Cột D: DT Kế hoạch công ty
-        if len(df.columns) > 4:
-            profit_col = df.columns[4]  # Cột E: LG Kế hoạch Công ty
+        # Chuẩn hóa region_filter
+        if region_filter and region_filter != 'Tất cả':
+            region_filter_upper = str(region_filter).upper().strip()
+            # Map tên khu vực
+            region_mapping = {
+                'MIEN BAC': 'MIEN BAC',
+                'MIỀN BẮC': 'MIEN BAC',
+                'MIEN TRUNG': 'MIEN TRUNG',
+                'MIỀN TRUNG': 'MIEN TRUNG',
+                'MIEN NAM': 'MIEN NAM',
+                'MIỀN NAM': 'MIEN NAM',
+                'TPHCM & DNB': 'TPHCM & DNB',
+                'TPHCM DNB': 'TPHCM & DNB',
+                'TPHCM VÀ DNB': 'TPHCM & DNB',
+                'MIEN TAY': 'MIEN TAY',
+                'MIỀN TÂY': 'MIEN TAY',
+                'MIENTAY': 'MIEN TAY'
+            }
+            target_region = region_mapping.get(region_filter_upper, region_filter_upper)
+        else:
+            target_region = None  # Dùng tổng Công ty
+        
+        # Tìm cột LK, DT, LG dựa trên region_filter
+        if target_region is None:
+            # Dùng tổng Công ty: Cột C, D, E (index 2, 3, 4)
+            if len(df.columns) > 2:
+                customers_col = df.columns[2]  # Cột C: LK
+            if len(df.columns) > 3:
+                revenue_col = df.columns[3]  # Cột D: DT (tr.d)
+            if len(df.columns) > 4:
+                profit_col = df.columns[4]  # Cột E: LG (tr.d)
+        else:
+            # Tìm cột của khu vực cụ thể
+            # Tìm vị trí của khu vực trong region_headers (dòng 4) để tính offset
+            region_idx_in_headers = None
+            if region_headers:
+                # Tìm index đầu tiên của khu vực trong region_headers
+                for i, header in enumerate(region_headers):
+                    header_upper = str(header).upper().strip()
+                    # Bỏ qua các cột trống hoặc không phải tên khu vực
+                    if not header_upper or header_upper in ['', 'NAN', 'NONE']:
+                        continue
+                    
+                    # Kiểm tra match với target_region
+                    if target_region == 'MIEN BAC':
+                        if ('MIEN BAC' in header_upper or 'MIỀN BẮC' in header_upper or 
+                            'MIENBAC' in header_upper or 
+                            (header_upper.startswith('MIEN') and 'BAC' in header_upper and 'TRUNG' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'BẮC' in header_upper and 'TRUNG' not in header_upper)):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN TRUNG':
+                        if ('MIEN TRUNG' in header_upper or 'MIỀN TRUNG' in header_upper or 
+                            'MIENTRUNG' in header_upper or
+                            (header_upper.startswith('MIEN') and 'TRUNG' in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'TRUNG' in header_upper)):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN NAM':
+                        if ('MIEN NAM' in header_upper or 'MIỀN NAM' in header_upper or 
+                            'MIENNAM' in header_upper or
+                            (header_upper.startswith('MIEN') and 'NAM' in header_upper and 'BAC' not in header_upper and 'TRUNG' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'NAM' in header_upper and 'BẮC' not in header_upper and 'TRUNG' not in header_upper)):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'TPHCM & DNB':
+                        if ('TPHCM' in header_upper and 'DNB' in header_upper) or \
+                           ('TPHCM' in header_upper and ('&' in header_upper or 'VÀ' in header_upper or 'VA' in header_upper)) or \
+                           ('TPHCM' in header_upper and 'DNB' in header_upper) or \
+                           ('HO CHI MINH' in header_upper and 'DNB' in header_upper):
+                            region_idx_in_headers = i
+                            break
+                    elif target_region == 'MIEN TAY':
+                        if ('MIEN TAY' in header_upper or 'MIỀN TÂY' in header_upper or 
+                            'MIENTAY' in header_upper or
+                            (header_upper.startswith('MIEN') and 'TAY' in header_upper and 'BAC' not in header_upper and 'TRUNG' not in header_upper and 'NAM' not in header_upper) or
+                            (header_upper.startswith('MIỀN') and 'TÂY' in header_upper and 'BẮC' not in header_upper and 'TRUNG' not in header_upper and 'NAM' not in header_upper)):
+                            region_idx_in_headers = i
+                            break
+            
+            # Tính offset dựa trên vị trí trong region_headers
+            if region_idx_in_headers is not None:
+                col_offset = region_idx_in_headers
+                
+                # Kiểm tra xem có đủ cột không
+                if len(df.columns) > col_offset:
+                    customers_col = df.columns[col_offset]  # LK
+                if len(df.columns) > col_offset + 1:
+                    revenue_col = df.columns[col_offset + 1]  # DT
+                if len(df.columns) > col_offset + 2:
+                    profit_col = df.columns[col_offset + 2]  # LG
+            
+            # Fallback: Tìm bằng cách duyệt qua các cột và tìm cột LK, DT, LG
+            # QUAN TRỌNG: Khi pandas đọc CSV có nhiều cột trùng tên, nó sẽ tự động thêm suffix
+            # Ví dụ: "LK" (Công ty), "LK.1" (Miền Bắc), "LK.2" (Miền Trung)
+            if customers_col is None or revenue_col is None or profit_col is None:
+                # Tìm các cột LK, DT, LG theo thứ tự và vị trí
+                lk_cols = []
+                dt_cols = []
+                lg_cols = []
+                
+                for idx, col in enumerate(df.columns):
+                    if col == nhom_tuyen_col:
+                        continue
+                    col_str = str(col).strip()
+                    col_upper = col_str.upper()
+                    col_idx = idx
+                    
+                    # Tìm cột LK (có thể là "LK", "LK.1", "LK.2", ...)
+                    if col_upper == 'LK' or col_upper.startswith('LK.') or 'LƯỢT KHÁCH' in col_upper:
+                        lk_cols.append((col_idx, col))
+                    # Tìm cột DT (có thể là "DT (tr.d)", "DT (tr.d).1", "DT (tr.d).2", ...)
+                    elif 'DT (TR.D)' in col_upper or 'DT(TR.D)' in col_upper or (col_upper.startswith('DT') and ('TR.D' in col_upper or 'TRD' in col_upper)):
+                        dt_cols.append((col_idx, col))
+                    # Tìm cột LG (có thể là "LG (tr.d)", "LG (tr.d).1", "LG (tr.d).2", ...)
+                    elif 'LG (TR.D)' in col_upper or 'LG(TR.D)' in col_upper or (col_upper.startswith('LG') and ('TR.D' in col_upper or 'TRD' in col_upper)):
+                        lg_cols.append((col_idx, col))
+                
+                # Xác định cột nào thuộc về khu vực đã chọn dựa trên vị trí
+                if target_region == 'MIEN BAC':
+                    # Lấy cột LK, DT, LG thứ hai (sau Công ty)
+                    # Ưu tiên: cột có suffix .1, nếu không có thì lấy cột có index trong khoảng 5-7
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.1' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 5 and col_idx < 8 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN TRUNG':
+                    # Lấy cột LK, DT, LG thứ ba
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.2' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 8 and col_idx < 11 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN NAM':
+                    # Lấy cột LK, DT, LG thứ tư
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 11 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 11 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 11 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'TPHCM & DNB':
+                    # Lấy cột LK, DT, LG thứ năm (index 11, 12, 13)
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 11:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 11 and col_idx < 14 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 12:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 12 and col_idx < 14 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.3' in col_name_str and col_idx >= 13:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 13 and col_idx < 14 and profit_col is None:
+                            profit_col = col_name
+                elif target_region == 'MIEN TAY':
+                    # Lấy cột LK, DT, LG thứ sáu (index 14, 15, 16)
+                    for col_idx, col_name in lk_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            customers_col = col_name
+                            break
+                        elif col_idx >= 14 and col_idx < 17 and customers_col is None:
+                            customers_col = col_name
+                    for col_idx, col_name in dt_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            revenue_col = col_name
+                            break
+                        elif col_idx >= 15 and col_idx < 17 and revenue_col is None:
+                            revenue_col = col_name
+                    for col_idx, col_name in lg_cols:
+                        col_name_str = str(col_name)
+                        if '.4' in col_name_str:
+                            profit_col = col_name
+                            break
+                        elif col_idx >= 16 and col_idx < 17 and profit_col is None:
+                            profit_col = col_name
         
         # Parse số liệu
         def parse_value(val):

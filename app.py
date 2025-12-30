@@ -791,11 +791,15 @@ with tab1:
                     # Có thể log ra để debug nhưng không hiển thị cho user
                     pass
             
-            # Xóa cột tạm
+            # Xóa cột tạm (GIỮ LẠI plan_revenue_etour để dùng cho "Doanh số dự kiến")
             etour_seats_data = etour_seats_data.drop(columns=[
-                'route_normalized', 'plan_revenue_etour', 'plan_seats_etour', 
+                'route_normalized', 'plan_seats_etour', 
                 'plan_revenue_plan', 'plan_customers_plan'
             ], errors='ignore')
+        else:
+            # Nếu không có all_plan_data, vẫn cần tạo plan_revenue_etour từ giá trị gốc
+            if 'plan_revenue_etour' not in etour_seats_data.columns:
+                etour_seats_data['plan_revenue_etour'] = etour_seats_data['plan_revenue'].copy()
         
         # Lấy region_filter từ session_state để filter dữ liệu (đã lấy ở trên)
         # selected_region đã được lấy ở trên
@@ -978,12 +982,17 @@ with tab1:
                 # Với actual: dùng 'sum' để sum các dòng theo tuyến tour (chỉ các dòng đã filter)
                 # QUAN TRỌNG: Đã filter theo region và period rồi, nên CHỈ cần groupby theo route_group
                 # KHÔNG groupby theo region_unit và period nữa vì đã filter rồi
-                domestic_seats_detail = domestic_seats_data_filtered.groupby(groupby_col).agg({
-                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum)
+                # Lưu ý: plan_revenue_etour cần sum vì có thể có nhiều dòng cùng route_group với giá trị khác nhau
+                agg_dict = {
+                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum) - từ file kế hoạch
                     'actual_revenue': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
                     'plan_seats': 'first',  # Lấy giá trị đầu tiên (không sum)
                     'actual_seats': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
-                }).reset_index()
+                }
+                if 'plan_revenue_etour' in domestic_seats_data_filtered.columns:
+                    agg_dict['plan_revenue_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột G)
+                
+                domestic_seats_detail = domestic_seats_data_filtered.groupby(groupby_col).agg(agg_dict).reset_index()
                 
                 # Đổi tên cột groupby về 'route' để dùng chung
                 if groupby_col == 'route_group':
@@ -992,6 +1001,11 @@ with tab1:
                 # Chuyển đổi đơn vị sang triệu đồng
                 domestic_seats_detail['plan_revenue_tr'] = domestic_seats_detail['plan_revenue'] / 1_000_000
                 domestic_seats_detail['actual_revenue_tr'] = domestic_seats_detail['actual_revenue'] / 1_000_000
+                # Chuyển đổi plan_revenue_etour sang triệu đồng (Doanh số dự kiến từ cột G của ETOUR)
+                if 'plan_revenue_etour' in domestic_seats_detail.columns:
+                    domestic_seats_detail['plan_revenue_etour_tr'] = domestic_seats_detail['plan_revenue_etour'] / 1_000_000
+                else:
+                    domestic_seats_detail['plan_revenue_etour_tr'] = 0
                 
                 # Tính các chỉ số
                 domestic_seats_detail['completion_revenue_pct'] = (domestic_seats_detail['actual_revenue'] / domestic_seats_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
@@ -1008,10 +1022,12 @@ with tab1:
                     'STT': range(1, len(domestic_seats_detail) + 1),
                     'Tuyến tour': domestic_seats_detail['route'],
                     'Doanh thu kế hoạch (Tr.đ)': domestic_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số dự kiến (Tr.đ)': domestic_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Doanh số đã bán (Tr.đ)': domestic_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch DT (%)': domestic_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
                     'Doanh số còn (Tr.đ)': domestic_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Lượt khách dự kiến': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': domestic_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': domestic_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
                     'LK kế hoạch còn': domestic_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
@@ -1085,12 +1101,17 @@ with tab1:
                 # Với actual: dùng 'sum' để sum các dòng theo tuyến tour (chỉ các dòng đã filter)
                 # QUAN TRỌNG: Đã filter theo region và period rồi, nên CHỈ cần groupby theo route_group
                 # KHÔNG groupby theo region_unit và period nữa vì đã filter rồi
-                outbound_seats_detail = outbound_seats_data_filtered.groupby(groupby_col).agg({
-                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum)
+                # Lưu ý: plan_revenue_etour cần sum vì có thể có nhiều dòng cùng route_group với giá trị khác nhau
+                agg_dict = {
+                    'plan_revenue': 'first',  # Lấy giá trị đầu tiên (không sum) - từ file kế hoạch
                     'actual_revenue': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
                     'plan_seats': 'first',  # Lấy giá trị đầu tiên (không sum)
                     'actual_seats': 'sum',  # Sum các dòng theo tuyến tour (chỉ trong region và period đã filter)
-                }).reset_index()
+                }
+                if 'plan_revenue_etour' in outbound_seats_data_filtered.columns:
+                    agg_dict['plan_revenue_etour'] = 'sum'  # Sum các dòng từ ETOUR (cột G)
+                
+                outbound_seats_detail = outbound_seats_data_filtered.groupby(groupby_col).agg(agg_dict).reset_index()
                 
                 # Đổi tên cột groupby về 'route' để dùng chung
                 if groupby_col == 'route_group':
@@ -1099,6 +1120,11 @@ with tab1:
                 # Chuyển đổi đơn vị sang triệu đồng
                 outbound_seats_detail['plan_revenue_tr'] = outbound_seats_detail['plan_revenue'] / 1_000_000
                 outbound_seats_detail['actual_revenue_tr'] = outbound_seats_detail['actual_revenue'] / 1_000_000
+                # Chuyển đổi plan_revenue_etour sang triệu đồng (Doanh số dự kiến từ cột G của ETOUR)
+                if 'plan_revenue_etour' in outbound_seats_detail.columns:
+                    outbound_seats_detail['plan_revenue_etour_tr'] = outbound_seats_detail['plan_revenue_etour'] / 1_000_000
+                else:
+                    outbound_seats_detail['plan_revenue_etour_tr'] = 0
                 
                 # Tính các chỉ số
                 outbound_seats_detail['completion_revenue_pct'] = (outbound_seats_detail['actual_revenue'] / outbound_seats_detail['plan_revenue'].replace(0, np.nan) * 100).fillna(0)
@@ -1115,10 +1141,12 @@ with tab1:
                     'STT': range(1, len(outbound_seats_detail) + 1),
                     'Tuyến tour': outbound_seats_detail['route'],
                     'Doanh thu kế hoạch (Tr.đ)': outbound_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số dự kiến (Tr.đ)': outbound_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Doanh số đã bán (Tr.đ)': outbound_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch DT (%)': outbound_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
                     'DT kế hoạch còn (Tr.đ)': outbound_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Lượt khách dự kiến': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': outbound_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': outbound_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
                     'LK kế hoạch còn': outbound_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")

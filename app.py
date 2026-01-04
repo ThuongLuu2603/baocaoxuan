@@ -1226,17 +1226,17 @@ with tab1:
                 # Tạo bảng chi tiết với format số có dấu phẩy
                 detail_table = pd.DataFrame({
                     'STT': range(1, len(domestic_seats_detail) + 1),
-                    'Tuyến tour': domestic_seats_detail['route'],
-                    'Doanh thu kế hoạch (Tr.đ)': domestic_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Doanh số dự kiến (Tr.đ)': domestic_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Doanh số đã bán (Tr.đ)': domestic_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tuyến Tour': domestic_seats_detail['route'],
+                    'Doanh Thu Kế hoạch (tr.đ)': domestic_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số đã bán (tr.đ)': domestic_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số còn lại (tr.đ)': domestic_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch DT (%)': domestic_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
-                    'Doanh số còn (Tr.đ)': domestic_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số dự kiến (tr.đ)': domestic_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Lượt khách dự kiến': domestic_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in domestic_seats_detail.columns else domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': domestic_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK kế hoạch còn lại': domestic_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': domestic_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
-                    'LK kế hoạch còn': domestic_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
+                    'LK mở bán': domestic_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in domestic_seats_detail.columns else domestic_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
                 })
                 
                 # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
@@ -1410,17 +1410,17 @@ with tab1:
                 # Tạo bảng chi tiết với format số có dấu phẩy
                 detail_table = pd.DataFrame({
                     'STT': range(1, len(outbound_seats_detail) + 1),
-                    'Tuyến tour': outbound_seats_detail['route'],
-                    'Doanh thu kế hoạch (Tr.đ)': outbound_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Doanh số dự kiến (Tr.đ)': outbound_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Doanh số đã bán (Tr.đ)': outbound_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Tuyến Tour': outbound_seats_detail['route'],
+                    'Doanh Thu Kế hoạch (tr.đ)': outbound_seats_detail['plan_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số đã bán (tr.đ)': outbound_seats_detail['actual_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số còn lại (tr.đ)': outbound_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch DT (%)': outbound_seats_detail['completion_revenue_pct'].round(1).astype(str) + '%',
-                    'DT kế hoạch còn (Tr.đ)': outbound_seats_detail['additional_revenue_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'Doanh số mở bán (tr.đ)': outbound_seats_detail['plan_revenue_etour_tr'].fillna(0).round(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK Kế hoạch': outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
-                    'Lượt khách dự kiến': outbound_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in outbound_seats_detail.columns else outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'LK đã thực hiện': outbound_seats_detail['actual_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
+                    'LK kế hoạch còn lại': outbound_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}"),
                     'Tốc độ đạt kế hoạch LK (%)': outbound_seats_detail['completion_seats_pct'].round(1).astype(str) + '%',
-                    'LK kế hoạch còn': outbound_seats_detail['additional_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
+                    'LK mở bán': outbound_seats_detail['plan_seats_etour'].fillna(0).astype(int).apply(lambda x: f"{x:,}") if 'plan_seats_etour' in outbound_seats_detail.columns else outbound_seats_detail['plan_seats'].fillna(0).astype(int).apply(lambda x: f"{x:,}")
                 })
                 
                 # Sắp xếp theo DT đã bán giảm dần (dùng giá trị số thực tế, không phải string đã format)
